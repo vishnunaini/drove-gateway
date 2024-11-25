@@ -37,7 +37,18 @@ drove = ["https://localhost:8080"] # add all HA cluster nodes in priority order.
 user = "" # leave empty if no auth is required.
 pass = ""
 access_token = "O-Bearer "
-leader_vhost = "drove.ssdev.test"
+leader_vhost = "drove.ssdev.stage1"
 # Nixy realm, set this if you want to be able to filter your apps (e.g. when you have different loadbalancers which should expose different apps)
 # Put your subdomain here. It will be used to match the subdomain of the exposed apps
-realm = "drove.xxxx.com"
+realm = "blah1.xxx.stage1"
+
+[[namespaces]]
+name = "stage2"
+drove = ["https://localhost:8080"] # add all HA cluster nodes in priority order.
+user = "" # leave empty if no auth is required.
+pass = ""
+access_token = "O-Bearer "
+leader_vhost = "drove.ssdev.stage2"
+# Nixy realm, set this if you want to be able to filter your apps (e.g. when you have different loadbalancers which should expose different apps)
+# Put your subdomain here. It will be used to match the subdomain of the exposed apps
+realm = "blah2.xxx.stage2"
