@@ -22,6 +22,24 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type NamespaceRenderingData struct {
+	LeaderVHost string `json:"-" toml:"leader_vhost"`
+	Leader      LeaderController
+	Apps        map[string]App
+	RoutingTag  string `json:"-" toml:"routing_tag"`
+	KnownVHosts Vhosts
+}
+
+type TemplateRenderingData struct {
+	Xproxy              string
+	LeftDelimiter       string                            `json:"-" toml:"left_delimiter"`
+	RightDelimiter      string                            `json:"-" toml:"right_delimiter"`
+	MaxFailsUpstream    *int                              `json:"max_fails,omitempty"`
+	FailTimeoutUpstream string                            `json:"fail_timeout,omitempty"`
+	SlowStartUpstream   string                            `json:"slow_start,omitempty"`
+	Namespaces          map[string]NamespaceRenderingData `json:"namespaces"`
+}
+
 // DroveApps struct for our apps nested with tasks.
 type DroveApps struct {
 	Status string `json:"status"`
@@ -83,10 +101,20 @@ func leaderController(endpoint string) *LeaderController {
 	return controllerHost
 }
 
-func fetchRecentEvents(client *http.Client, syncPoint *CurrSyncPoint) (*DroveEventSummary, error) {
+func fetchRecentEvents(client *http.Client, syncPoint *CurrSyncPoint, namespace string) (*DroveEventSummary, error) {
+
+	droveConfig, err := db.ReadDroveConfig(namespace)
+	if err != nil {
+		logger.WithFields(logrus.Fields{
+			"namespace": namespace,
+		}).Error("Error loading drove config")
+		err := errors.New("Error loading Drove Config")
+		return nil, err
+	}
+
 	var endpoint string
 	for _, es := range health.Endpoints {
-		if es.Healthy {
+		if es.Healthy && es.Namespace == namespace {
 			endpoint = es.Endpoint
 			break
 		}
@@ -95,20 +123,18 @@ func fetchRecentEvents(client *http.Client, syncPoint *CurrSyncPoint) (*DroveEve
 		err := errors.New("all endpoints are down")
 		return nil, err
 	}
-	//if config.apiTimeout != 0 {
-	//    timeout = config.apiTimeout
-	//}
+
 	// fetch all apps and tasks with a single request.
 	req, err := http.NewRequest("GET", endpoint+"/apis/v1/cluster/events/summary?lastSyncTime="+fmt.Sprint(syncPoint.LastSyncTime), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	if config.User != "" {
-		req.SetBasicAuth(config.User, config.Pass)
+	if droveConfig.User != "" {
+		req.SetBasicAuth(droveConfig.User, droveConfig.Pass)
 	}
-	if config.AccessToken != "" {
-		req.Header.Add("Authorization", config.AccessToken)
+	if droveConfig.AccessToken != "" {
+		req.Header.Add("Authorization", droveConfig.AccessToken)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -123,7 +149,8 @@ func fetchRecentEvents(client *http.Client, syncPoint *CurrSyncPoint) (*DroveEve
 		return nil, err
 	}
 	logger.WithFields(logrus.Fields{
-		"data": newEventsApiResponse,
+		"data":      newEventsApiResponse,
+		"namespace": namespace,
 	}).Debug("events response")
 	if newEventsApiResponse.Status != "SUCCESS" {
 		return nil, errors.New("Events api call failed. Message: " + newEventsApiResponse.Message)
@@ -133,10 +160,10 @@ func fetchRecentEvents(client *http.Client, syncPoint *CurrSyncPoint) (*DroveEve
 	return &(newEventsApiResponse.EventSummary), nil
 }
 
-func refreshLeaderData() {
+func refreshLeaderData(namespace string) {
 	var endpoint string
 	for _, es := range health.Endpoints {
-		if es.Healthy {
+		if es.Namespace == namespace && es.Healthy {
 			endpoint = es.Endpoint
 			break
 		}
@@ -146,25 +173,38 @@ func refreshLeaderData() {
 		go countAllEndpointsDownErrors.Inc()
 		return
 	}
-	if endpoint != config.Leader.Endpoint {
+	currentLeader, err := db.ReadLeader(namespace)
+	if err != nil {
+		logger.Error("Error while reading current leader for namespace" + namespace)
+		return
+	}
+	if endpoint != currentLeader.Endpoint {
 		logger.WithFields(logrus.Fields{
 			"new": endpoint,
-			"old": config.Leader.Endpoint,
+			"old": currentLeader.Endpoint,
 		}).Info("Looks like master shifted. Will resync app")
 		var newLeader = leaderController(endpoint)
 		if newLeader != nil {
-			config.Leader = *newLeader
+			err = db.UpdateLeader(namespace, *newLeader)
+			if err != nil {
+				logger.WithFields(logrus.Fields{
+					"leader":    currentLeader,
+					"newLeader": newLeader,
+					"namespace": namespace,
+				}).Error("Error seting new leader")
+			}
 			logger.WithFields(logrus.Fields{
-				"leader": config.Leader,
+				"leader":    currentLeader,
+				"newLeader": newLeader,
 			}).Info("New leader being set")
-			reloadAllApps(true)
+			reloadAllApps(namespace, true)
 		} else {
 			logrus.Warn("Leade struct generation failed")
 		}
 	}
 }
 
-func pollEvents() {
+func pollEvents(namespace string) {
 	go func() {
 		client := &http.Client{
 			Timeout:   0 * time.Second,
@@ -186,16 +226,18 @@ func pollEvents() {
 				}).Debug("Syncing...")
 				syncData.Lock()
 				defer syncData.Unlock()
-				refreshLeaderData()
-				eventSummary, err := fetchRecentEvents(client, &syncData)
+				refreshLeaderData(namespace)
+				eventSummary, err := fetchRecentEvents(client, &syncData, namespace)
 				if err != nil {
 					logger.WithFields(logrus.Fields{
-						"error": err.Error(),
+						"error":     err.Error(),
+						"namespace": namespace,
 					}).Error("unable to sync events from drove")
 				} else {
 					if len(eventSummary.EventsCount) > 0 {
 						logger.WithFields(logrus.Fields{
 							"events":    eventSummary.EventsCount,
+							"namespace": namespace,
 							"localTime": time.Now(),
 						}).Info("Events received")
 						reloadNeeded := false
@@ -216,7 +258,8 @@ func pollEvents() {
 						}
 					} else {
 						logger.WithFields(logrus.Fields{
-							"events": eventSummary.EventsCount,
+							"events":    eventSummary.EventsCount,
+							"namespace": namespace,
 						}).Debug("New Events received")
 					}
 				}
@@ -266,11 +309,21 @@ func endpointHealth() {
 						health.Endpoints[i].Message = err.Error()
 						continue
 					}
-					if config.User != "" {
-						req.SetBasicAuth(config.User, config.Pass)
+					droveConfig, err := db.ReadDroveConfig(es.Namespace)
+					if err != nil {
+						logger.WithFields(logrus.Fields{
+							"error":    err,
+							"endpoint": es.Endpoint,
+						}).Error("an error occurred reading drove config for health request")
+						health.Endpoints[i].Healthy = false
+						health.Endpoints[i].Message = err.Error()
+						continue
 					}
-					if config.AccessToken != "" {
-						req.Header.Add("Authorization", config.AccessToken)
+					if droveConfig.User != "" {
+						req.SetBasicAuth(droveConfig.User, droveConfig.Pass)
+					}
+					if droveConfig.AccessToken != "" {
+						req.Header.Add("Authorization", droveConfig.AccessToken)
 					}
 					resp, err := client.Do(req)
 					if err != nil {
@@ -298,11 +351,11 @@ func endpointHealth() {
 	}()
 }
 
-func fetchApps(jsonapps *DroveApps) error {
+func fetchApps(droveConfig DroveConfig, jsonapps *DroveApps) error {
 	var endpoint string
 	var timeout int = 5
 	for _, es := range health.Endpoints {
-		if es.Healthy {
+		if es.Healthy && droveConfig.Name == es.Namespace {
 			endpoint = es.Endpoint
 			break
 		}
@@ -327,11 +380,11 @@ func fetchApps(jsonapps *DroveApps) error {
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
-	if config.User != "" {
-		req.SetBasicAuth(config.User, config.Pass)
+	if droveConfig.User != "" {
+		req.SetBasicAuth(droveConfig.User, droveConfig.Pass)
 	}
-	if config.AccessToken != "" {
-		req.Header.Add("Authorization", config.AccessToken)
+	if droveConfig.AccessToken != "" {
+		req.Header.Add("Authorization", droveConfig.AccessToken)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -358,13 +411,13 @@ func matchingVhost(vHost string, realms []string) bool {
 	return false
 }
 
-func syncApps(jsonapps *DroveApps, vhosts *Vhosts) bool {
+func syncApps(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vhosts) bool {
 	config.Lock()
 	defer config.Unlock()
 	apps := make(map[string]App)
 	var realms = []string{}
-	if len(config.Realm) > 0 {
-		realms = strings.Split(config.Realm, ",")
+	if len(droveConfig.Realm) > 0 {
+		realms = strings.Split(droveConfig.Realm, ",")
 	}
 	for _, app := range jsonapps.Apps {
 		var newapp = App{}
@@ -377,17 +430,17 @@ func syncApps(jsonapps *DroveApps, vhosts *Vhosts) bool {
 		}
 		// Lets ignore apps if no instances are available
 		if len(newapp.Hosts) > 0 {
-			var toAppend = matchingVhost(app.Vhost, realms) || (len(config.RealmSuffix) > 0 && strings.HasSuffix(app.Vhost, config.RealmSuffix))
+			var toAppend = matchingVhost(app.Vhost, realms) || (len(droveConfig.RealmSuffix) > 0 && strings.HasSuffix(app.Vhost, droveConfig.RealmSuffix))
 			if toAppend {
 				vhosts.Vhosts[app.Vhost] = true
 				newapp.ID = app.Vhost
 				newapp.Vhost = app.Vhost
 
 				var groupName = app.Vhost
-				if len(config.RoutingTag) > 0 {
-					if tagValue, ok := app.Tags[config.RoutingTag]; ok {
+				if len(droveConfig.RoutingTag) > 0 {
+					if tagValue, ok := app.Tags[droveConfig.RoutingTag]; ok {
 						logger.WithFields(logrus.Fields{
-							"tag":   config.RoutingTag,
+							"tag":   droveConfig.RoutingTag,
 							"vhost": newapp.Vhost,
 							"value": tagValue,
 						}).Info("routing tag found")
@@ -395,7 +448,7 @@ func syncApps(jsonapps *DroveApps, vhosts *Vhosts) bool {
 					} else {
 
 						logger.WithFields(logrus.Fields{
-							"tag":   config.RoutingTag,
+							"tag":   droveConfig.RoutingTag,
 							"vhost": newapp.Vhost,
 						}).Debug("no routing tag found")
 					}
@@ -429,33 +482,73 @@ func syncApps(jsonapps *DroveApps, vhosts *Vhosts) bool {
 				apps[app.Vhost] = newapp
 			} else {
 				logger.WithFields(logrus.Fields{
-					"realm": config.Realm,
+					"realm": droveConfig.Realm,
 					"vhost": app.Vhost,
 				}).Warn("Host ignored due to realm mismath")
 			}
 		}
 	}
+
+	currentApps, er := db.ReadApp(droveConfig.Name)
+	if er != nil {
+		logger.Error("Error while reading apps for namespace" + droveConfig.Name)
+		//Continue to update with latest data
+	}
+
 	// Not all events bring changes, so lets see if anything is new.
-	eq := reflect.DeepEqual(apps, config.Apps)
+	eq := reflect.DeepEqual(apps, currentApps)
 	if eq {
 		return true
 	}
-	config.Apps = apps
+
+	err := db.UpdateApps(droveConfig.Name, apps)
+	if err != nil {
+		logger.Error("Error while updating apps for namespace" + droveConfig.Name)
+		return true
+	}
 	return false
+}
+
+func createTemplateData(templateData *TemplateRenderingData) {
+	namespaceData := db.ReadAllNamespace()
+	staticData := db.ReadStaticData()
+
+	templateData.Xproxy = staticData.Xproxy
+	templateData.LeftDelimiter = staticData.LeftDelimiter
+	templateData.RightDelimiter = staticData.RightDelimiter
+	templateData.FailTimeoutUpstream = staticData.FailTimeoutUpstream
+	templateData.MaxFailsUpstream = staticData.MaxFailsUpstream
+	templateData.SlowStartUpstream = staticData.SlowStartUpstream
+
+	templateData.Namespaces = make(map[string]NamespaceRenderingData)
+
+	for name, data := range namespaceData {
+		templateData.Namespaces[name] = NamespaceRenderingData{
+			LeaderVHost: data.Drove.LeaderVHost,
+			Leader:      data.Leader,
+			Apps:        data.Apps,
+			KnownVHosts: data.KnownVHosts,
+			RoutingTag:  data.Drove.RoutingTag,
+		}
+	}
+	return
 }
 
 func writeConf() error {
 	config.RLock()
 	defer config.RUnlock()
+	allApps := db.ReadAllApps()
+	allLeaders := db.ReadAllLeaders()
+
 	template, err := getTmpl()
 	if err != nil {
 		return err
 	}
-
 	logger.WithFields(logrus.Fields{
-		"config: ": config.Apps,
-		"leader":   config.Leader,
+		"apps: ": allApps,
+		"leader": allLeaders,
 	}).Info("Config: ")
+
 	parent := filepath.Dir(config.NginxConfig)
 	tmpFile, err := ioutil.TempFile(parent, ".nginx.conf.tmp-")
 	if err != nil {
@@ -463,14 +556,19 @@ func writeConf() error {
 	}
 	defer tmpFile.Close()
 	lastConfig = tmpFile.Name()
-	err = template.Execute(tmpFile, &config)
+	templateData := TemplateRenderingData{}
+	createTemplateData(&templateData)
+	logger.WithFields(logrus.Fields{
+		"templateData": templateData,
+	}).Info("Template Data generated")
+	err = template.Execute(tmpFile, &templateData)
 	if err != nil {
 		return err
 	}
 	config.LastUpdates.LastConfigRendered = time.Now()
 	err = checkConf(tmpFile.Name())
 	if err != nil {
-		//os.Remove(tmpFile.Name())
+		logger.Error("Error in config generated")
 		return err
 	}
 	err = os.Rename(tmpFile.Name(), config.NginxConfig)
@@ -484,8 +582,9 @@ func writeConf() error {
 func nginxPlus() error {
 	config.RLock()
 	defer config.RUnlock()
+	allApps := db.ReadAllApps()
 	logger.WithFields(logrus.Fields{}).Info("Updating upstreams for the whitelisted drove tags")
-	for _, app := range config.Apps {
+	for _, app := range allApps {
 		var newFormattedServers []string
 		for _, t := range app.Hosts {
 			var hostAndPortMapping string
@@ -581,6 +680,9 @@ func checkTmpl() error {
 }
 
 func getTmpl() (*template.Template, error) {
+	logger.WithFields(logrus.Fields{
+		"file": config.NginxTemplate,
+	}).Info("Reading template")
 	return template.New(filepath.Base(config.NginxTemplate)).
 		Delims(config.LeftDelimiter, config.RightDelimiter).
 		Funcs(template.FuncMap{
@@ -642,10 +744,10 @@ func reloadNginx() error {
 }
 
 func reload() error {
-	return reloadAllApps(false)
+	return reloadAllApps(config.DroveNamespaces[0].Name, false) //TODO: for for all namespace
 }
 
-func updateAndReloadConfig(vhosts *Vhosts) error {
+func updateAndReloadConfig(namepsace string, vhosts *Vhosts) error {
 	start := time.Now()
 	config.LastUpdates.LastSync = time.Now()
 	err := writeConf()
@@ -675,18 +777,28 @@ func updateAndReloadConfig(vhosts *Vhosts) error {
 		go countSuccessfulReloads.Inc()
 		go observeReloadTimeMetric(elapsed)
 		config.LastUpdates.LastNginxReload = time.Now()
-		config.KnownVHosts = *vhosts
+		db.UpdateKnownVhosts(namepsace, *vhosts)
 	}
 	return nil
 }
 
-func reloadAllApps(leaderShifted bool) error {
-	logger.Debug("Reloading config")
+func reloadAllApps(namespace string, leaderShifted bool) error {
+	logger.Debug("Reloading config for namespace" + namespace)
+
+	droveConfig, er := db.ReadDroveConfig(namespace)
+	if er != nil {
+		logger.WithFields(logrus.Fields{
+			"namespace": namespace,
+		}).Error("Error loading drove config")
+		er := errors.New("Error loading Drove Config")
+		return er
+	}
+
 	start := time.Now()
 	jsonapps := DroveApps{}
 	vhosts := Vhosts{}
 	vhosts.Vhosts = map[string]bool{}
-	err := fetchApps(&jsonapps)
+	err := fetchApps(droveConfig, &jsonapps)
 	if err != nil || jsonapps.Status != "SUCCESS" {
 		if err != nil {
 			logger.WithFields(logrus.Fields{
@@ -697,16 +809,15 @@ func reloadAllApps(leaderShifted bool) error {
 		go countFailedReloads.Inc()
 		return err
 	}
-	equal := syncApps(&jsonapps, &vhosts)
+	equal := syncApps(droveConfig, &jsonapps, &vhosts)
 	if equal && !leaderShifted {
 		logger.Debug("no config changes")
 		return nil
 	}
-
 	config.LastUpdates.LastSync = time.Now()
 	if len(config.Nginxplusapiaddr) == 0 || config.Nginxplusapiaddr == "" {
 		//Nginx plus is disabled
-		err = updateAndReloadConfig(&vhosts)
+		err = updateAndReloadConfig(namespace, &vhosts)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
@@ -720,9 +831,10 @@ func reloadAllApps(leaderShifted bool) error {
 		if config.NginxReloadDisabled {
 			logger.Warn("Template reload has been disabled")
 		} else {
-			if !reflect.DeepEqual(vhosts, config.KnownVHosts) {
+			currentKnownVhosts, _ := db.ReadKnownVhosts(namespace)
+			if !reflect.DeepEqual(vhosts, currentKnownVhosts) {
 				logger.Info("Need to reload config")
-				err = updateAndReloadConfig(&vhosts)
+				err = updateAndReloadConfig(namespace, &vhosts)
 				if err != nil {
 					logger.WithFields(logrus.Fields{
 						"error": err.Error(),
