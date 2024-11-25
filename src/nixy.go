@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/avast/retry-go"
 	"github.com/gorilla/mux"
 	"github.com/peterbourgon/g2s"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -122,9 +121,9 @@ type EndpointStatus struct {
 
 // Health struct
 type Health struct {
-	Config    Status
-	Template  Status
-	Endpoints []EndpointStatus
+	Config             Status
+	Template           Status
+	NamesapceEndpoints map[string][]EndpointStatus
 }
 
 // Global variables
@@ -170,33 +169,48 @@ func setupDataManager() {
 	}
 }
 
-// Eventqueue with buffer of two, because we dont really need more.
-var eventqueue = make(chan bool, 2)
+// Reload signal with buffer of two, because we dont really need more.
+var reloadSignalQueue = make(chan bool, 2)
 
 // Global http transport for connection reuse
 var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 
 func newHealth() Health {
 	var h Health
+	h.NamesapceEndpoints = make(map[string][]EndpointStatus)
 	for _, nsConfig := range config.DroveNamespaces {
+		e := []EndpointStatus{}
 		for _, ep := range nsConfig.Drove {
 			var s EndpointStatus
 			s.Endpoint = ep
 			s.Namespace = nsConfig.Name
 			s.Healthy = false
 			s.Message = "OK"
-			h.Endpoints = append(h.Endpoints, s)
+			e = append(e, s)
 		}
+		h.NamesapceEndpoints[nsConfig.Name] = e
 	}
 	return h
+}
+
+func setupPollEvents() {
+	for _, nsConfig := range config.DroveNamespaces {
+		pollDroveEvents(nsConfig.Name)
+	}
+}
+
+func setupEndpointHealth() {
+	for _, nsConfig := range config.DroveNamespaces {
+		namepaceEndpointHealth(nsConfig.Name)
+	}
 }
 
 func nixyReload(w http.ResponseWriter, r *http.Request) {
 	logger.WithFields(logrus.Fields{
 		"client": r.RemoteAddr,
-	}).Info("drove reload triggered")
+	}).Info("Reload triggered")
 	select {
-	case eventqueue <- true: // Add reload to our queue channel, unless it is full of course.
+	case reloadSignalQueue <- true: // Add reload to our queue channel, unless it is full of course.
 		w.WriteHeader(202)
 		fmt.Fprintln(w, "queued")
 		return
@@ -233,16 +247,21 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 			health.Config.Healthy = true
 		}
 	}
-	allBackendsDown := true
-	for _, endpoint := range health.Endpoints {
-		if endpoint.Healthy {
-			allBackendsDown = false
-			break
+	anyNamesapceDown := false
+	for _, nsEnpoint := range health.NamesapceEndpoints {
+		allBackendsDownForGivenNS := true
+		for _, endpoint := range nsEnpoint {
+			if endpoint.Healthy {
+				allBackendsDownForGivenNS = false
+				break
+			}
 		}
+		anyNamesapceDown = anyNamesapceDown || allBackendsDownForGivenNS
 	}
-	if allBackendsDown {
+	if anyNamesapceDown {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
+
 	w.Header().Add("Content-Type", "application/json; charset=utf-8")
 	b, _ := json.MarshalIndent(health, "", "  ")
 	w.Write(b)
@@ -251,7 +270,7 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 
 func nixyConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "application/json; charset=utf-8")
-	b, _ := json.MarshalIndent(&config, "", "  ")
+	b, _ := json.MarshalIndent(&db, "", "  ")
 	w.Write(b)
 	return
 }
@@ -297,6 +316,12 @@ func main() {
 		}).Error("unable to Dial statsd")
 		statsd = g2s.Noop() //fallback to Noop.
 	}
+
+	//default refresh interval
+	if config.EventRefreshIntervalSec <= 0 {
+		config.EventRefreshIntervalSec = 2
+	}
+
 	setupPrometheusMetrics()
 	setupDataManager()
 	mux := mux.NewRouter()
@@ -329,13 +354,9 @@ func main() {
 		}
 	}
 	health = newHealth()
-	endpointHealth()
-	er := retry.Do(reload)
-	if er != nil {
-		logger.Error("Error reloading :" + er.Error())
-	}
-	eventWorker()                              //Reloader
-	pollEvents(config.DroveNamespaces[0].Name) //TODO: add for all namepsaces
+	setupEndpointHealth()
+	setupPollEvents()
+	reloadWorker() //Reloader
 	logger.Info("Address:" + config.Address)
 	if config.PortWithTLS {
 		logger.Info("starting nixy on https://" + config.Address + ":" + config.Port)

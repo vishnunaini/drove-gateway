@@ -40,10 +40,11 @@ type StaticConfig struct {
 
 // DataManager manages namespaces and data for those namespaces
 type DataManager struct {
-	mu              sync.RWMutex             // Mutex for concurrency control
-	namespaces      map[string]NamespaceData // Map of namespaces to NamespaceData
-	LastKnownVhosts Vhosts
-	StaticData      StaticConfig
+	mu                  sync.RWMutex             // Mutex for concurrency control
+	namespaces          map[string]NamespaceData // Map of namespaces to NamespaceData
+	LastKnownVhosts     Vhosts
+	LastReloadTimestamp time.Time // Timestamp of creation or modification
+	StaticData          StaticConfig
 }
 
 // NewDataManager creates a new instance of DataManager
@@ -55,7 +56,7 @@ func NewDataManager(inXproxy string, inLeftDelimiter string, inRightDelimiter st
 		namespaces: make(map[string]NamespaceData),
 		StaticData: StaticConfig{Xproxy: inXproxy, LeftDelimiter: inLeftDelimiter, RightDelimiter: inRightDelimiter,
 			MaxFailsUpstream: inMaxFailsUpstream, FailTimeoutUpstream: inFailTimeoutUpstream, SlowStartUpstream: inSlowStartUpstream},
-		LastKnownVhosts: empltyLastKnownVhosts,
+		LastKnownVhosts: empltyLastKnownVhosts, LastReloadTimestamp: time.Now(),
 	}
 }
 
@@ -123,6 +124,33 @@ func (dm *DataManager) ReadDroveConfig(namespace string) (DroveConfig, error) {
 	return ns.Drove, nil //returning copy
 }
 
+func (dm *DataManager) ReadLastTimestamp(namespace string) (time.Time, error) {
+	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
+	defer dm.mu.RUnlock() // Ensure the lock is always released
+	operation := "ReadLastTimestamps"
+
+	// Ensure namespace exists
+	if _, exists := dm.namespaces[namespace]; !exists {
+		logger.WithFields(logrus.Fields{
+			"operation": operation,
+			"namespace": namespace,
+		}).Error("NamespaceData read failed")
+		err := fmt.Errorf("namespace '%s' not found", namespace)
+		return time.Time{}, err
+	}
+
+	ns := dm.namespaces[namespace]
+
+	// Log success
+	logger.WithFields(logrus.Fields{
+		"operation": operation,
+		"namespace": namespace,
+		"Timestamp": ns.Timestamp,
+	}).Info("ReadLastTimestamps successfully")
+
+	return ns.Timestamp, nil //returning copy
+}
+
 func (dm *DataManager) ReadLeader(namespace string) (LeaderController, error) {
 	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.RUnlock() // Ensure the lock is always released
@@ -145,7 +173,6 @@ func (dm *DataManager) ReadLeader(namespace string) (LeaderController, error) {
 		"operation": operation,
 		"namespace": namespace,
 		"leader":    ns.Leader,
-		"ns":        ns,
 	}).Info("ReadLeader successfully")
 
 	return ns.Leader, nil //returning copy
@@ -204,7 +231,7 @@ func (dm *DataManager) UpdateLeader(namespace string, leader LeaderController) e
 	return nil
 }
 
-func (dm *DataManager) ReadApp(namespace string) (map[string]App, error) {
+func (dm *DataManager) ReadApps(namespace string) (map[string]App, error) {
 	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.RUnlock() // Ensure the lock is always released
 	operation := "ReadLeader"
@@ -361,6 +388,20 @@ func (dm *DataManager) UpdateKnownVhosts(namespace string, KnownVHosts Vhosts) e
 	return nil
 }
 
+func (dm *DataManager) ReadLastReloadTimestamp() time.Time {
+	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
+	defer dm.mu.RUnlock() // Ensure the lock is always released
+	operation := "LastReloadTimestamp"
+
+	// Log success
+	logger.WithFields(logrus.Fields{
+		"operation":           operation,
+		"LastReloadTimestamp": dm.LastReloadTimestamp,
+	}).Info("ReadLoadedTime successfully")
+
+	return dm.LastReloadTimestamp //returning copy
+}
+
 func (dm *DataManager) ReadLastKnownVhosts() Vhosts {
 	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.RUnlock() // Ensure the lock is always released
@@ -381,6 +422,7 @@ func (dm *DataManager) UpdateLastKnownVhosts(inLastKnownVhosts Vhosts) error {
 	operation := "UpdateLastKnownVhosts"
 
 	dm.LastKnownVhosts = inLastKnownVhosts
+	dm.LastReloadTimestamp = time.Now()
 
 	logger.WithFields(logrus.Fields{
 		"operation":       operation,
