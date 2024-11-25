@@ -506,6 +506,12 @@ func syncApps(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vhosts) bool
 		logger.Error("Error while updating apps for namespace" + droveConfig.Name)
 		return true
 	}
+
+	er = db.UpdateKnownVhosts(droveConfig.Name, *vhosts)
+	if er != nil {
+		logger.Error("Error while updating KnowVhosts for namespace" + droveConfig.Name)
+		return true
+	}
 	return false
 }
 
@@ -747,9 +753,10 @@ func reload() error {
 	return reloadAllApps(config.DroveNamespaces[0].Name, false) //TODO: for for all namespace
 }
 
-func updateAndReloadConfig(namepsace string, vhosts *Vhosts) error {
+func updateAndReloadConfig() error {
 	start := time.Now()
 	config.LastUpdates.LastSync = time.Now()
+	vhosts := db.ReadAllKnownVhosts()
 	err := writeConf()
 	if err != nil {
 		logger.WithFields(logrus.Fields{
@@ -777,7 +784,7 @@ func updateAndReloadConfig(namepsace string, vhosts *Vhosts) error {
 		go countSuccessfulReloads.Inc()
 		go observeReloadTimeMetric(elapsed)
 		config.LastUpdates.LastNginxReload = time.Now()
-		db.UpdateKnownVhosts(namepsace, *vhosts)
+		db.UpdateLastKnownVhosts(vhosts)
 	}
 	return nil
 }
@@ -817,7 +824,7 @@ func reloadAllApps(namespace string, leaderShifted bool) error {
 	config.LastUpdates.LastSync = time.Now()
 	if len(config.Nginxplusapiaddr) == 0 || config.Nginxplusapiaddr == "" {
 		//Nginx plus is disabled
-		err = updateAndReloadConfig(namespace, &vhosts)
+		err = updateAndReloadConfig()
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
@@ -831,16 +838,13 @@ func reloadAllApps(namespace string, leaderShifted bool) error {
 		if config.NginxReloadDisabled {
 			logger.Warn("Template reload has been disabled")
 		} else {
-			currentKnownVhosts, _ := db.ReadKnownVhosts(namespace)
-			if !reflect.DeepEqual(vhosts, currentKnownVhosts) {
-				logger.Info("Need to reload config")
-				err = updateAndReloadConfig(namespace, &vhosts)
-				if err != nil {
-					logger.WithFields(logrus.Fields{
-						"error": err.Error(),
-					}).Error("unable to update and reload nginx config. NPlus api calls will be skipped.")
-					return err
-				}
+			logger.Info("Need to reload config")
+			err = updateAndReloadConfig()
+			if err != nil {
+				logger.WithFields(logrus.Fields{
+					"error": err.Error(),
+				}).Error("unable to update and reload nginx config. NPlus api calls will be skipped.")
+				return err
 			} else {
 				logger.Debug("No changes detected in vhosts. No config update is necessary. Upstream updates will happen via nplus apis")
 			}

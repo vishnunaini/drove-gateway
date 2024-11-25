@@ -40,18 +40,22 @@ type StaticConfig struct {
 
 // DataManager manages namespaces and data for those namespaces
 type DataManager struct {
-	mu         sync.RWMutex             // Mutex for concurrency control
-	namespaces map[string]NamespaceData // Map of namespaces to NamespaceData
-	StaticData StaticConfig
+	mu              sync.RWMutex             // Mutex for concurrency control
+	namespaces      map[string]NamespaceData // Map of namespaces to NamespaceData
+	LastKnownVhosts Vhosts
+	StaticData      StaticConfig
 }
 
 // NewDataManager creates a new instance of DataManager
 func NewDataManager(inXproxy string, inLeftDelimiter string, inRightDelimiter string,
 	inMaxFailsUpstream *int, inFailTimeoutUpstream string, inSlowStartUpstream string) *DataManager {
+	empltyLastKnownVhosts := Vhosts{}
+	empltyLastKnownVhosts.Vhosts = make(map[string]bool)
 	return &DataManager{
 		namespaces: make(map[string]NamespaceData),
 		StaticData: StaticConfig{Xproxy: inXproxy, LeftDelimiter: inLeftDelimiter, RightDelimiter: inRightDelimiter,
 			MaxFailsUpstream: inMaxFailsUpstream, FailTimeoutUpstream: inFailTimeoutUpstream, SlowStartUpstream: inSlowStartUpstream},
+		LastKnownVhosts: empltyLastKnownVhosts,
 	}
 }
 
@@ -305,6 +309,29 @@ func (dm *DataManager) ReadKnownVhosts(namespace string) (Vhosts, error) {
 	return ns.KnownVHosts, nil //returning copy
 }
 
+func (dm *DataManager) ReadAllKnownVhosts() Vhosts {
+	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
+	defer dm.mu.RUnlock() // Ensure the lock is always released
+	operation := "ReadAllKnownVhosts"
+
+	allKnownVhosts := Vhosts{}
+	allKnownVhosts.Vhosts = make(map[string]bool)
+
+	for _, data := range dm.namespaces {
+		for key, value := range data.KnownVHosts.Vhosts {
+			allKnownVhosts.Vhosts[key] = value
+		}
+	}
+
+	// Log success
+	logger.WithFields(logrus.Fields{
+		"operation": operation,
+		"allApps":   allKnownVhosts,
+	}).Info("ReadAllKnownVhosts successfully")
+
+	return allKnownVhosts //returning copy
+}
+
 func (dm *DataManager) UpdateKnownVhosts(namespace string, KnownVHosts Vhosts) error {
 	dm.mu.Lock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.Unlock() // Ensure the lock is always released
@@ -331,6 +358,34 @@ func (dm *DataManager) UpdateKnownVhosts(namespace string, KnownVHosts Vhosts) e
 		"knownHosts": dm.namespaces[namespace].KnownVHosts,
 		"time":       dm.namespaces[namespace].Timestamp,
 	}).Info("UpdateKnownVhosts successfully")
+	return nil
+}
+
+func (dm *DataManager) ReadLastKnownVhosts() Vhosts {
+	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
+	defer dm.mu.RUnlock() // Ensure the lock is always released
+	operation := "ReadLastKnownVhosts"
+
+	// Log success
+	logger.WithFields(logrus.Fields{
+		"operation":       operation,
+		"LastKnownVhosts": dm.LastKnownVhosts,
+	}).Info("LastKnownVhosts successfully")
+
+	return dm.LastKnownVhosts //returning copy
+}
+
+func (dm *DataManager) UpdateLastKnownVhosts(inLastKnownVhosts Vhosts) error {
+	dm.mu.Lock()         // Read lock to allow multiple concurrent reads
+	defer dm.mu.Unlock() // Ensure the lock is always released
+	operation := "UpdateLastKnownVhosts"
+
+	dm.LastKnownVhosts = inLastKnownVhosts
+
+	logger.WithFields(logrus.Fields{
+		"operation":       operation,
+		"LastKnownVhosts": dm.LastKnownVhosts,
+	}).Info("UpdateLastKnownVhosts successfully")
 	return nil
 }
 
