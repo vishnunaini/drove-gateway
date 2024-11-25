@@ -491,7 +491,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 
 func refreshApps(namespace string, leaderShifted bool) error {
 	logger.Debug("Reloading config for namespace" + namespace)
-
+	start := time.Now()
 	droveConfig, er := db.ReadDroveConfig(namespace)
 	if er != nil {
 		logger.WithFields(logrus.Fields{
@@ -531,6 +531,10 @@ func refreshApps(namespace string, leaderShifted bool) error {
 	}
 
 	triggerReload(namespace, !equal, leaderShifted, lastConfigUpdated)
+	elapsed := time.Since(start)
+	logger.WithFields(logrus.Fields{
+		"took": elapsed,
+	}).Info("Apps updated")
 	return nil
 }
 
