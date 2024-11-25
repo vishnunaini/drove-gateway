@@ -322,6 +322,11 @@ func main() {
 		config.EventRefreshIntervalSec = 2
 	}
 
+	//default apiTimeout
+	if config.apiTimeout <= 0 {
+		config.apiTimeout = 10
+	}
+
 	setupPrometheusMetrics()
 	setupDataManager()
 	mux := mux.NewRouter()

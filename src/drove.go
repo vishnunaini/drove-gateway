@@ -84,7 +84,7 @@ func leaderController(endpoint string) *LeaderController {
 	return controllerHost
 }
 
-func fetchRecentEvents(client *http.Client, syncPoint *CurrSyncPoint, namespace string) (*DroveEventSummary, error) {
+func fetchRecentEvents(httpClient *http.Client, syncPoint *CurrSyncPoint, namespace string) (*DroveEventSummary, error) {
 
 	droveConfig, err := db.ReadDroveConfig(namespace)
 	if err != nil {
@@ -119,7 +119,7 @@ func fetchRecentEvents(client *http.Client, syncPoint *CurrSyncPoint, namespace 
 	if droveConfig.AccessToken != "" {
 		req.Header.Add("Authorization", droveConfig.AccessToken)
 	}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +192,7 @@ func newDroveClient(name string) *DroveClient {
 	return &DroveClient{namespace: name,
 		syncPoint: CurrSyncPoint{},
 		httpClient: &http.Client{
-			Timeout:   0 * time.Second,
+			Timeout:   time.Duration(config.apiTimeout) * time.Second,
 			Transport: tr,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
@@ -239,7 +239,7 @@ func pollDroveEvents(name string) {
 							reloadNeeded = true
 						}
 						if reloadNeeded || leaderShifted {
-							refreshApps(namespace, leaderShifted)
+							refreshApps(droveClient.httpClient, namespace, leaderShifted)
 						} else {
 							logger.Debug("Irrelevant events ignored")
 						}
@@ -257,18 +257,18 @@ func pollDroveEvents(name string) {
 
 func namepaceEndpointHealth(namespace string) {
 	go func() {
+		healthCheckClient := &http.Client{
+			Timeout:   5 * time.Second,
+			Transport: tr,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 		ticker := time.NewTicker(2 * time.Second)
 		for {
 			select {
 			case <-ticker.C:
 				for i, es := range health.NamesapceEndpoints[namespace] {
-					client := &http.Client{
-						Timeout:   5 * time.Second,
-						Transport: tr,
-						CheckRedirect: func(req *http.Request, via []*http.Request) error {
-							return http.ErrUseLastResponse
-						},
-					}
 					req, err := http.NewRequest("GET", es.Endpoint+"/apis/v1/ping", nil)
 					if err != nil {
 						logger.WithFields(logrus.Fields{
@@ -295,7 +295,7 @@ func namepaceEndpointHealth(namespace string) {
 					if droveConfig.AccessToken != "" {
 						req.Header.Add("Authorization", droveConfig.AccessToken)
 					}
-					resp, err := client.Do(req)
+					resp, err := healthCheckClient.Do(req)
 					if err != nil {
 						logger.WithFields(logrus.Fields{
 							"error":     err.Error(),
@@ -325,9 +325,8 @@ func namepaceEndpointHealth(namespace string) {
 	}()
 }
 
-func fetchApps(droveConfig DroveConfig, jsonapps *DroveApps) error {
+func fetchApps(httpClient *http.Client, droveConfig DroveConfig, jsonapps *DroveApps) error {
 	var endpoint string
-	var timeout int = 5
 	for _, es := range health.NamesapceEndpoints[droveConfig.Name] {
 		if es.Healthy {
 			endpoint = es.Endpoint
@@ -337,16 +336,6 @@ func fetchApps(droveConfig DroveConfig, jsonapps *DroveApps) error {
 	if endpoint == "" {
 		err := errors.New("all endpoints are down")
 		return err
-	}
-	if config.apiTimeout != 0 {
-		timeout = config.apiTimeout
-	}
-	client := &http.Client{
-		Timeout:   time.Duration(timeout) * time.Second,
-		Transport: tr,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
 	}
 	// fetch all apps and tasks with a single request.
 	req, err := http.NewRequest("GET", endpoint+"/apis/v1/endpoints", nil)
@@ -360,7 +349,7 @@ func fetchApps(droveConfig DroveConfig, jsonapps *DroveApps) error {
 	if droveConfig.AccessToken != "" {
 		req.Header.Add("Authorization", droveConfig.AccessToken)
 	}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -489,7 +478,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 	return false
 }
 
-func refreshApps(namespace string, leaderShifted bool) error {
+func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) error {
 	logger.Debug("Reloading config for namespace" + namespace)
 	start := time.Now()
 	droveConfig, er := db.ReadDroveConfig(namespace)
@@ -504,7 +493,7 @@ func refreshApps(namespace string, leaderShifted bool) error {
 	jsonapps := DroveApps{}
 	vhosts := Vhosts{}
 	vhosts.Vhosts = map[string]bool{}
-	err := fetchApps(droveConfig, &jsonapps)
+	err := fetchApps(httpClient, droveConfig, &jsonapps)
 	if err != nil || jsonapps.Status != "SUCCESS" {
 		if err != nil {
 			logger.WithFields(logrus.Fields{
