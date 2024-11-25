@@ -153,7 +153,7 @@ func refreshLeaderData(namespace string) bool {
 	}
 	if endpoint == "" {
 		logger.Error("all endpoints are down")
-		go countAllEndpointsDownErrors.Inc()
+		go countAllEndpointsDownErrors.WithLabelValues(namespace).Inc()
 		return false
 	}
 	currentLeader, err := db.ReadLeader(namespace)
@@ -302,7 +302,7 @@ func namepaceEndpointHealth(namespace string) {
 							"endpoint":  es.Endpoint,
 							"namespace": namespace,
 						}).Error("endpoint is down")
-						go countEndpointDownErrors.Inc()
+						go countEndpointDownErrors.WithLabelValues(namespace).Inc()
 						health.NamesapceEndpoints[namespace][i].Healthy = false
 						health.NamesapceEndpoints[namespace][i].Message = err.Error()
 						continue
@@ -512,7 +512,7 @@ func refreshApps(namespace string, leaderShifted bool) error {
 			}).Error("unable to sync from drove")
 		}
 		go statsCount("reload.failed", 1)
-		go countFailedReloads.Inc()
+		go countDroveAppSyncErrors.WithLabelValues(namespace).Inc()
 		return err
 	}
 	equal := syncAppsAndVhosts(droveConfig, &jsonapps, &vhosts)
@@ -532,6 +532,7 @@ func refreshApps(namespace string, leaderShifted bool) error {
 
 	triggerReload(namespace, !equal, leaderShifted, lastConfigUpdated)
 	elapsed := time.Since(start)
+	go observeAppRefreshTimeMetric(namespace, elapsed)
 	logger.WithFields(logrus.Fields{
 		"took": elapsed,
 	}).Info("Apps updated")
