@@ -227,7 +227,7 @@ func (dm *DataManager) UpdateLeader(namespace string, leader LeaderController) e
 		"namespace": namespace,
 		"leader":    ns.Leader,
 		"time":      ns.Timestamp,
-	}).Info("UpdateLeader data successfully")
+	}).Info("UpdateLeader data finished successfully")
 	return nil
 }
 
@@ -305,7 +305,7 @@ func (dm *DataManager) UpdateApps(namespace string, apps map[string]App) error {
 		"namespace": namespace,
 		"apps":      dm.namespaces[namespace].Apps,
 		"time":      dm.namespaces[namespace].Timestamp,
-	}).Info("UpdateApps successfully")
+	}).Info("UpdateApps finished successfully")
 	return nil
 }
 
@@ -384,7 +384,7 @@ func (dm *DataManager) UpdateKnownVhosts(namespace string, KnownVHosts Vhosts) e
 		"namespace":  namespace,
 		"knownHosts": dm.namespaces[namespace].KnownVHosts,
 		"time":       dm.namespaces[namespace].Timestamp,
-	}).Info("UpdateKnownVhosts successfully")
+	}).Info("UpdateKnownVhosts finished successfully")
 	return nil
 }
 
@@ -427,7 +427,7 @@ func (dm *DataManager) UpdateLastKnownVhosts(inLastKnownVhosts Vhosts) error {
 	logger.WithFields(logrus.Fields{
 		"operation":       operation,
 		"LastKnownVhosts": dm.LastKnownVhosts,
-	}).Info("UpdateLastKnownVhosts successfully")
+	}).Info("UpdateLastKnownVhosts finished successfully")
 	return nil
 }
 
