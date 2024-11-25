@@ -334,7 +334,7 @@ func main() {
 	if er != nil {
 		logger.Error("Error reloading :" + er.Error())
 	}
-	eventWorker()
+	eventWorker()                              //Reloader
 	pollEvents(config.DroveNamespaces[0].Name) //TODO: add for all namepsaces
 	logger.Info("Address:" + config.Address)
 	if config.PortWithTLS {
