@@ -6,12 +6,6 @@ port = "6000"
 # X-Proxy header, defaults to hostname
 xproxy = ""
 
-# Drove API
-drove = [${DROVE_CONTROLLER_LIST}] # add all HA cluster nodes in priority order.
-event_refresh_interval_sec = 5
-user = "${DROVE_USERNAME}" # leave empty if no auth is required.
-pass = "${DROVE_PASSWORD}"
-
 # Nginx
 nginx_config = "/etc/nginx/nginx.conf"
 nginx_template = "${TEMPLATE_PATH}"
@@ -22,5 +16,10 @@ maxfailsupstream = 0
 failtimeoutupstream = "1s"
 slowstartupstream = "0s"
 
+# Drove API
+[[namespaces]]
+drove = [${DROVE_CONTROLLER_LIST}] # add all HA cluster nodes in priority order.
+user = "${DROVE_USERNAME}" # leave empty if no auth is required.
+pass = "${DROVE_PASSWORD}"
 leader_vhost = "${NGINX_DROVE_VHOST}"
-
+event_refresh_interval_sec = 5

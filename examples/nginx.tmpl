@@ -38,28 +38,31 @@ http {
             return 503;
         }
     }
-    {{if and .LeaderVHost .Leader.Endpoint}}
-    upstream {{.LeaderVHost}} {
-        server {{.Leader.Host}}:{{.Leader.Port}};
+    {{- range $nid, $namespace := .Namespaces}}
+    {{if and $namespace.LeaderVHost $namespace.Leader.Endpoint}}
+    upstream {{$namespace.LeaderVHost}} {
+        server {{$namespace.Leader.Host}}:{{$namespace.Leader.Port}};
     }
     server {
         listen 7000;
-        server_name {{.LeaderVHost}};
+        server_name {{$namespace.LeaderVHost}};
         location / {
-            proxy_set_header HOST {{.Leader.Host}};
+            proxy_set_header HOST {{$namespace.Leader.Host}};
             proxy_connect_timeout 30;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
-            proxy_pass http://{{.LeaderVHost}};
+            proxy_pass http://{{$namespace.LeaderVHost}};
         }
     }
     {{end}}
-    {{- range $id, $app := .Apps}}
+    {{end}}
+    {{- range $nid, $namespace := .Namespaces}}
+    {{- range $id, $app := $namespace.Apps}}
     upstream {{$app.Vhost}} {
         {{- range $app.Hosts}}
         server {{ .Host }}:{{ .Port }};
-        {{- end}}
+        {{end}}
     }
     server {
         listen 7000;
@@ -73,5 +76,6 @@ http {
             proxy_pass http://{{$app.Vhost}};
         }
     }
-    {{- end}}
+    {{end}}
+    {{end}}
 }
