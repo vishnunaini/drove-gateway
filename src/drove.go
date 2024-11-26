@@ -202,60 +202,124 @@ func newDroveClient(name string) *DroveClient {
 	}
 }
 
-func pollDroveEvents(name string) {
+func pollingHandler(droveClient *DroveClient) {
+	namespace := droveClient.namespace
+	logger.WithFields(logrus.Fields{
+		"at":        time.Now(),
+		"namespace": namespace,
+	}).Debug("Syncing...")
+
+	droveClient.syncPoint.Lock()
+	defer droveClient.syncPoint.Unlock()
+
+	leaderShifted := refreshLeaderData(namespace)
+	eventSummary, err := fetchRecentEvents(droveClient.httpClient, &droveClient.syncPoint, namespace)
+	if err != nil {
+		logger.WithFields(logrus.Fields{
+			"error":     err.Error(),
+			"namespace": namespace,
+		}).Error("unable to sync events from drove")
+	} else {
+		if len(eventSummary.EventsCount) > 0 {
+			logger.WithFields(logrus.Fields{
+				"events":    eventSummary.EventsCount,
+				"namespace": namespace,
+				"localTime": time.Now(),
+			}).Info("Events received")
+			reloadNeeded := false
+			if _, ok := eventSummary.EventsCount["APP_STATE_CHANGE"]; ok {
+				reloadNeeded = true
+			}
+			if _, ok := eventSummary.EventsCount["INSTANCE_STATE_CHANGE"]; ok {
+				reloadNeeded = true
+			}
+			if reloadNeeded || leaderShifted {
+				refreshApps(droveClient.httpClient, namespace, leaderShifted)
+			} else {
+				logger.Debug("Irrelevant events ignored")
+			}
+		} else {
+			logger.WithFields(logrus.Fields{
+				"events":    eventSummary.EventsCount,
+				"namespace": namespace,
+			}).Debug("New Events received")
+		}
+	}
+}
+
+func pollDroveEvents(name string, forceRefreshSignal chan bool) {
 	go func() {
 		droveClient := newDroveClient(name)
 		ticker := time.NewTicker(time.Duration(droveClient.eventRefreshInterval) * time.Second)
-		for range ticker.C {
-			func() {
-				namespace := droveClient.namespace
-				logger.WithFields(logrus.Fields{
-					"at":        time.Now(),
-					"namespace": namespace,
-				}).Debug("Syncing...")
-
-				droveClient.syncPoint.Lock()
-				defer droveClient.syncPoint.Unlock()
-
-				leaderShifted := refreshLeaderData(namespace)
-				eventSummary, err := fetchRecentEvents(droveClient.httpClient, &droveClient.syncPoint, namespace)
-				if err != nil {
-					logger.WithFields(logrus.Fields{
-						"error":     err.Error(),
-						"namespace": namespace,
-					}).Error("unable to sync events from drove")
-				} else {
-					if len(eventSummary.EventsCount) > 0 {
-						logger.WithFields(logrus.Fields{
-							"events":    eventSummary.EventsCount,
-							"namespace": namespace,
-							"localTime": time.Now(),
-						}).Info("Events received")
-						reloadNeeded := false
-						if _, ok := eventSummary.EventsCount["APP_STATE_CHANGE"]; ok {
-							reloadNeeded = true
-						}
-						if _, ok := eventSummary.EventsCount["INSTANCE_STATE_CHANGE"]; ok {
-							reloadNeeded = true
-						}
-						if reloadNeeded || leaderShifted {
-							refreshApps(droveClient.httpClient, namespace, leaderShifted)
-						} else {
-							logger.Debug("Irrelevant events ignored")
-						}
-					} else {
-						logger.WithFields(logrus.Fields{
-							"events":    eventSummary.EventsCount,
-							"namespace": namespace,
-						}).Debug("New Events received")
-					}
-				}
-			}()
+		for {
+			select {
+			case <-ticker.C:
+				logger.Info("Refreshing drove events as per schedule for namesapce:" + droveClient.namespace)
+				pollingHandler(droveClient)
+			case <-forceRefreshSignal:
+				logger.Info("Refreshing drove events due to force referesh namesapce:" + droveClient.namespace)
+				pollingHandler(droveClient)
+			}
 		}
 	}()
 }
 
-func namepaceEndpointHealth(namespace string) {
+func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
+	for i, es := range health.NamesapceEndpoints[namespace] {
+		req, err := http.NewRequest("GET", es.Endpoint+"/apis/v1/ping", nil)
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"error":    err.Error(),
+				"endpoint": es.Endpoint,
+			}).Error("an error occurred creating endpoint health request")
+			health.NamesapceEndpoints[namespace][i].Healthy = false
+			health.NamesapceEndpoints[namespace][i].Message = err.Error()
+			continue
+		}
+		droveConfig, err := db.ReadDroveConfig(es.Namespace)
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"error":    err,
+				"endpoint": es.Endpoint,
+			}).Error("an error occurred reading drove config for health request")
+			health.NamesapceEndpoints[namespace][i].Healthy = false
+			health.NamesapceEndpoints[namespace][i].Message = err.Error()
+			continue
+		}
+		if droveConfig.User != "" {
+			req.SetBasicAuth(droveConfig.User, droveConfig.Pass)
+		}
+		if droveConfig.AccessToken != "" {
+			req.Header.Add("Authorization", droveConfig.AccessToken)
+		}
+		resp, err := healthCheckClient.Do(req)
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"error":     err.Error(),
+				"endpoint":  es.Endpoint,
+				"namespace": namespace,
+			}).Error("endpoint is down")
+			go countEndpointDownErrors.WithLabelValues(namespace).Inc()
+			health.NamesapceEndpoints[namespace][i].Healthy = false
+			health.NamesapceEndpoints[namespace][i].Message = err.Error()
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			health.NamesapceEndpoints[namespace][i].Healthy = false
+			health.NamesapceEndpoints[namespace][i].Message = resp.Status
+			continue
+		}
+		health.NamesapceEndpoints[namespace][i].Healthy = true
+		health.NamesapceEndpoints[namespace][i].Message = "OK"
+		logger.WithFields(logrus.Fields{
+			"host":      es.Endpoint,
+			"namespace": namespace,
+		}).Debug(" Endpoint is healthy")
+	}
+}
+
+func endpointHealth(namespace string) {
 	go func() {
 		healthCheckClient := &http.Client{
 			Timeout:   5 * time.Second,
@@ -268,58 +332,7 @@ func namepaceEndpointHealth(namespace string) {
 		for {
 			select {
 			case <-ticker.C:
-				for i, es := range health.NamesapceEndpoints[namespace] {
-					req, err := http.NewRequest("GET", es.Endpoint+"/apis/v1/ping", nil)
-					if err != nil {
-						logger.WithFields(logrus.Fields{
-							"error":    err.Error(),
-							"endpoint": es.Endpoint,
-						}).Error("an error occurred creating endpoint health request")
-						health.NamesapceEndpoints[namespace][i].Healthy = false
-						health.NamesapceEndpoints[namespace][i].Message = err.Error()
-						continue
-					}
-					droveConfig, err := db.ReadDroveConfig(es.Namespace)
-					if err != nil {
-						logger.WithFields(logrus.Fields{
-							"error":    err,
-							"endpoint": es.Endpoint,
-						}).Error("an error occurred reading drove config for health request")
-						health.NamesapceEndpoints[namespace][i].Healthy = false
-						health.NamesapceEndpoints[namespace][i].Message = err.Error()
-						continue
-					}
-					if droveConfig.User != "" {
-						req.SetBasicAuth(droveConfig.User, droveConfig.Pass)
-					}
-					if droveConfig.AccessToken != "" {
-						req.Header.Add("Authorization", droveConfig.AccessToken)
-					}
-					resp, err := healthCheckClient.Do(req)
-					if err != nil {
-						logger.WithFields(logrus.Fields{
-							"error":     err.Error(),
-							"endpoint":  es.Endpoint,
-							"namespace": namespace,
-						}).Error("endpoint is down")
-						go countEndpointDownErrors.WithLabelValues(namespace).Inc()
-						health.NamesapceEndpoints[namespace][i].Healthy = false
-						health.NamesapceEndpoints[namespace][i].Message = err.Error()
-						continue
-					}
-					resp.Body.Close()
-					if resp.StatusCode != 200 {
-						health.NamesapceEndpoints[namespace][i].Healthy = false
-						health.NamesapceEndpoints[namespace][i].Message = resp.Status
-						continue
-					}
-					health.NamesapceEndpoints[namespace][i].Healthy = true
-					health.NamesapceEndpoints[namespace][i].Message = "OK"
-					logger.WithFields(logrus.Fields{
-						"host":      es.Endpoint,
-						"namespace": namespace,
-					}).Debug(" Endpoint is healthy")
-				}
+				endpointHealthHandler(healthCheckClient, namespace)
 			}
 		}
 	}()

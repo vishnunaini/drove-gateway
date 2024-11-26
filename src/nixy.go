@@ -171,6 +171,7 @@ func setupDataManager() {
 
 // Reload signal with buffer of two, because we dont really need more.
 var reloadSignalQueue = make(chan bool, 2)
+var refreshSignalQueue = make(map[string]chan bool)
 
 // Global http transport for connection reuse
 var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
@@ -193,32 +194,61 @@ func newHealth() Health {
 	return h
 }
 
+func setupDefaultConfig() {
+	//default refresh interval
+	if config.EventRefreshIntervalSec <= 0 {
+		config.EventRefreshIntervalSec = 2
+	}
+
+	//default apiTimeout
+	if config.apiTimeout <= 0 {
+		config.apiTimeout = 10
+	}
+}
+
+func setupRefreshChannel() {
+	for _, nsConfig := range config.DroveNamespaces {
+		refreshSignalQueue[nsConfig.Name] = make(chan bool, 2)
+	}
+}
+
 func setupPollEvents() {
 	for _, nsConfig := range config.DroveNamespaces {
-		pollDroveEvents(nsConfig.Name)
+		pollDroveEvents(nsConfig.Name, refreshSignalQueue[nsConfig.Name])
 	}
 }
 
 func setupEndpointHealth() {
 	for _, nsConfig := range config.DroveNamespaces {
-		namepaceEndpointHealth(nsConfig.Name)
+		endpointHealth(nsConfig.Name)
 	}
+}
+
+func forceReload() bool {
+	queued := true
+	for _, nsConfig := range config.DroveNamespaces {
+		select {
+		case refreshSignalQueue[nsConfig.Name] <- true: // Add referesh to our signal channel, unless it is full of course.
+		default:
+			queued = false
+		}
+	}
+	return queued
 }
 
 func nixyReload(w http.ResponseWriter, r *http.Request) {
 	logger.WithFields(logrus.Fields{
 		"client": r.RemoteAddr,
 	}).Info("Reload triggered")
-	select {
-	case reloadSignalQueue <- true: // Add reload to our queue channel, unless it is full of course.
+	queued := forceReload()
+	if queued {
 		w.WriteHeader(202)
 		fmt.Fprintln(w, "queued")
 		return
-	default:
-		w.WriteHeader(202)
-		fmt.Fprintln(w, "queue is full")
-		return
 	}
+	w.WriteHeader(202)
+	fmt.Fprintln(w, "queue is full")
+	return
 }
 
 func nixyHealth(w http.ResponseWriter, r *http.Request) {
@@ -317,16 +347,8 @@ func main() {
 		statsd = g2s.Noop() //fallback to Noop.
 	}
 
-	//default refresh interval
-	if config.EventRefreshIntervalSec <= 0 {
-		config.EventRefreshIntervalSec = 2
-	}
-
-	//default apiTimeout
-	if config.apiTimeout <= 0 {
-		config.apiTimeout = 10
-	}
-
+	setupDefaultConfig()
+	setupRefreshChannel()
 	setupPrometheusMetrics()
 	setupDataManager()
 	mux := mux.NewRouter()
@@ -362,6 +384,7 @@ func main() {
 	setupEndpointHealth()
 	setupPollEvents()
 	reloadWorker() //Reloader
+	// forceReload()
 	logger.Info("Address:" + config.Address)
 	if config.PortWithTLS {
 		logger.Info("starting nixy on https://" + config.Address + ":" + config.Port)
