@@ -79,7 +79,7 @@ func reload() error {
 	elapsed := time.Since(start)
 	logger.WithFields(logrus.Fields{
 		"took": elapsed,
-	}).Info("config updated")
+	}).Info("config reloaded successfully")
 	return nil
 
 }
@@ -109,7 +109,7 @@ func updateAndReloadConfig() error {
 		elapsed := time.Since(start)
 		logger.WithFields(logrus.Fields{
 			"took": elapsed,
-		}).Info("config updated")
+		}).Info("config updated successfully")
 		go statsCount("reload.success", 1)
 		go statsTiming("reload.time", elapsed)
 		go countSuccessfulReloads.Inc()
