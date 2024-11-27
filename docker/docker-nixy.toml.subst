@@ -21,5 +21,6 @@ slowstartupstream = "0s"
 drove = [${DROVE_CONTROLLER_LIST}] # add all HA cluster nodes in priority order.
 user = "${DROVE_USERNAME}" # leave empty if no auth is required.
 pass = "${DROVE_PASSWORD}"
+name = "${DROVE_CLUSTER_NAME}"
 leader_vhost = "${NGINX_DROVE_VHOST}"
 event_refresh_interval_sec = 5

@@ -31,6 +31,7 @@ else
     export DROVE_CONTROLLER_LIST=$(for host in "${hosts[@]}"; do echo "\"$host\""; done|paste -sd ',' -)
     export DROVE_USERNAME="${DROVE_USERNAME:-guest}"
     export DROVE_PASSWORD="${DROVE_PASSWORD:-guest}"
+    export DROVE_CLUSTER_NAME"${DROVE_PASSWORD:-default}"
 
     export NGINX_NUM_WORKERS=${NGINX_NUM_WORKERS:-2}
 
