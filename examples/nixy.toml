@@ -39,7 +39,6 @@ event_refresh_interval_sec = 5
 user = "" # leave empty if no auth is required.
 pass = ""
 name = "default"
-access_token = "O-Bearer OLYMPUS_TOKEN"
 # Nixy realm, set this if you want to be able to filter your apps (e.g. when you have different loadbalancers which should expose different apps)
 # Put your subdomain here. It will be used to match the subdomain of the exposed apps
 #realm = "api.nixy.stg-drove.phonepe.nb6"

@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -171,7 +172,7 @@ func setupDataManager() {
 
 // Reload signal with buffer of two, because we dont really need more.
 var reloadSignalQueue = make(chan bool, 2)
-var refreshSignalQueue = make(map[string]chan bool)
+var refreshSignalQueue = make(chan bool, 2)
 
 // Global http transport for connection reuse
 var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
@@ -195,6 +196,11 @@ func newHealth() Health {
 }
 
 func setupDefaultConfig() {
+	// Lets default empty Xproxy to hostname.
+	if config.Xproxy == "" {
+		config.Xproxy, _ = os.Hostname()
+	}
+
 	//default refresh interval
 	if config.EventRefreshIntervalSec <= 0 {
 		config.EventRefreshIntervalSec = 2
@@ -206,41 +212,25 @@ func setupDefaultConfig() {
 	}
 }
 
-func setupRefreshChannel() {
+func validateConfig() error {
 	for _, nsConfig := range config.DroveNamespaces {
-		refreshSignalQueue[nsConfig.Name] = make(chan bool, 2)
-	}
-}
-
-func setupPollEvents() {
-	for _, nsConfig := range config.DroveNamespaces {
-		pollDroveEvents(nsConfig.Name, refreshSignalQueue[nsConfig.Name])
-	}
-}
-
-func setupEndpointHealth() {
-	for _, nsConfig := range config.DroveNamespaces {
-		endpointHealth(nsConfig.Name)
-	}
-}
-
-func forceReload() bool {
-	queued := true
-	for _, nsConfig := range config.DroveNamespaces {
-		select {
-		case refreshSignalQueue[nsConfig.Name] <- true: // Add referesh to our signal channel, unless it is full of course.
-		default:
-			queued = false
+		if nsConfig.Name == "" {
+			return errors.New("Drove namespace name is mandatory")
 		}
 	}
-	return queued
+	return nil
 }
 
 func nixyReload(w http.ResponseWriter, r *http.Request) {
 	logger.WithFields(logrus.Fields{
 		"client": r.RemoteAddr,
 	}).Info("Reload triggered")
-	queued := forceReload()
+	queued := true
+	select {
+	case refreshSignalQueue <- true: // Add referesh to our signal channel, unless it is full of course.
+	default:
+		queued = false
+	}
 	if queued {
 		w.WriteHeader(202)
 		fmt.Fprintln(w, "queued")
@@ -334,11 +324,14 @@ func main() {
 			"error": err.Error(),
 		}).Fatal("problem parsing config")
 	}
-	// Lets default empty Xproxy to hostname.
-	if config.Xproxy == "" {
-		config.Xproxy, _ = os.Hostname()
-	}
 	setloglevel()
+	err = validateConfig()
+	if err != nil {
+		logger.WithFields(logrus.Fields{
+			"error": err.Error(),
+		}).Fatal("problem in config")
+	}
+
 	statsd, err = setupStatsd()
 	if err != nil {
 		logger.WithFields(logrus.Fields{
@@ -346,9 +339,7 @@ func main() {
 		}).Error("unable to Dial statsd")
 		statsd = g2s.Noop() //fallback to Noop.
 	}
-
 	setupDefaultConfig()
-	setupRefreshChannel()
 	setupPrometheusMetrics()
 	setupDataManager()
 	mux := mux.NewRouter()

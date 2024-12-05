@@ -61,8 +61,7 @@ http {
     {{end}}
     {{end}}
 
-    {{- range $nid, $namespace := .Namespaces}}
-    {{- range $id, $app := $namespace.Apps}}
+    {{- range $id, $app := .Apps}}
     {{- range $gid, $hostgrp := .Groups}}
     upstream {{$gid}} {
         {{- range $hostgrp.Hosts}}
@@ -106,6 +105,5 @@ http {
             proxy_set_header Connection $connection_upgrade;
         }
     }
-    {{- end}}
     {{- end}}
 }

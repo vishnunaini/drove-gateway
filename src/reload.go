@@ -18,14 +18,11 @@ import (
 )
 
 type NamespaceRenderingData struct {
-	LeaderVHost string `json:"-" toml:"leader_vhost"`
+	LeaderVHost string
 	Leader      LeaderController
-	Apps        map[string]App
-	RoutingTag  string `json:"-" toml:"routing_tag"`
-	KnownVHosts Vhosts
 }
 
-type TemplateRenderingData struct {
+type RenderingData struct {
 	Xproxy              string
 	LeftDelimiter       string                            `json:"-" toml:"left_delimiter"`
 	RightDelimiter      string                            `json:"-" toml:"right_delimiter"`
@@ -33,15 +30,18 @@ type TemplateRenderingData struct {
 	FailTimeoutUpstream string                            `json:"fail_timeout,omitempty"`
 	SlowStartUpstream   string                            `json:"slow_start,omitempty"`
 	Namespaces          map[string]NamespaceRenderingData `json:"namespaces"`
+	Apps                map[string]App
 }
 
 func reload() error {
 	start := time.Now()
 	var err error
+	data := RenderingData{}
+	createRenderingData(&data)
 	config.LastUpdates.LastSync = time.Now()
 	if len(config.Nginxplusapiaddr) == 0 || config.Nginxplusapiaddr == "" {
 		//Nginx plus is disabled
-		err = updateAndReloadConfig()
+		err = updateAndReloadConfig(&data)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
@@ -56,7 +56,7 @@ func reload() error {
 			logger.Warn("Template reload has been disabled")
 		} else {
 			logger.Info("Need to reload config")
-			err = updateAndReloadConfig()
+			err = updateAndReloadConfig(&data)
 			if err != nil {
 				logger.WithFields(logrus.Fields{
 					"error": err.Error(),
@@ -66,7 +66,7 @@ func reload() error {
 				logger.Debug("No changes detected in vhosts. No config update is necessary. Upstream updates will happen via nplus apis")
 			}
 		}
-		err = nginxPlus()
+		err = nginxPlus(&data)
 	}
 	if err != nil {
 		logger.WithFields(logrus.Fields{
@@ -84,11 +84,11 @@ func reload() error {
 
 }
 
-func updateAndReloadConfig() error {
+func updateAndReloadConfig(data *RenderingData) error {
 	start := time.Now()
 	config.LastUpdates.LastSync = time.Now()
 	vhosts := db.ReadAllKnownVhosts()
-	err := writeConf()
+	err := writeConf(data)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
@@ -120,45 +120,44 @@ func updateAndReloadConfig() error {
 	return nil
 }
 
-func createTemplateData(templateData *TemplateRenderingData) {
+func createRenderingData(data *RenderingData) {
 	namespaceData := db.ReadAllNamespace()
 	staticData := db.ReadStaticData()
 
-	templateData.Xproxy = staticData.Xproxy
-	templateData.LeftDelimiter = staticData.LeftDelimiter
-	templateData.RightDelimiter = staticData.RightDelimiter
-	templateData.FailTimeoutUpstream = staticData.FailTimeoutUpstream
-	templateData.MaxFailsUpstream = staticData.MaxFailsUpstream
-	templateData.SlowStartUpstream = staticData.SlowStartUpstream
+	data.Xproxy = staticData.Xproxy
+	data.LeftDelimiter = staticData.LeftDelimiter
+	data.RightDelimiter = staticData.RightDelimiter
+	data.FailTimeoutUpstream = staticData.FailTimeoutUpstream
+	data.MaxFailsUpstream = staticData.MaxFailsUpstream
+	data.SlowStartUpstream = staticData.SlowStartUpstream
+	data.Namespaces = make(map[string]NamespaceRenderingData)
 
-	templateData.Namespaces = make(map[string]NamespaceRenderingData)
+	allApps := make(map[string]App)
 
-	for name, data := range namespaceData {
-		templateData.Namespaces[name] = NamespaceRenderingData{
-			LeaderVHost: data.Drove.LeaderVHost,
-			Leader:      data.Leader,
-			Apps:        data.Apps,
-			KnownVHosts: data.KnownVHosts,
-			RoutingTag:  data.Drove.RoutingTag,
+	for name, nmData := range namespaceData {
+		data.Namespaces[name] = NamespaceRenderingData{
+			LeaderVHost: nmData.Drove.LeaderVHost,
+			Leader:      nmData.Leader,
+		}
+		for appId, appData := range nmData.Apps {
+			allApps[appId] = appData //TODO:fix this
 		}
 	}
+	data.Apps = allApps
+	logger.WithFields(logrus.Fields{
+		"data": data,
+	}).Info("Rendering data generated")
 	return
 }
 
-func writeConf() error {
+func writeConf(data *RenderingData) error {
 	config.RLock()
 	defer config.RUnlock()
-	allApps := db.ReadAllApps()
-	allLeaders := db.ReadAllLeaders()
 
 	template, err := getTmpl()
 	if err != nil {
 		return err
 	}
-	logger.WithFields(logrus.Fields{
-		"apps: ": allApps,
-		"leader": allLeaders,
-	}).Info("Config: ")
 
 	parent := filepath.Dir(config.NginxConfig)
 	tmpFile, err := ioutil.TempFile(parent, ".nginx.conf.tmp-")
@@ -167,12 +166,7 @@ func writeConf() error {
 	}
 	defer tmpFile.Close()
 	lastConfig = tmpFile.Name()
-	templateData := TemplateRenderingData{}
-	createTemplateData(&templateData)
-	logger.WithFields(logrus.Fields{
-		"templateData": templateData,
-	}).Info("Template Data generated")
-	err = template.Execute(tmpFile, &templateData)
+	err = template.Execute(tmpFile, &data)
 	if err != nil {
 		return err
 	}
@@ -190,12 +184,12 @@ func writeConf() error {
 	return nil
 }
 
-func nginxPlus() error {
+func nginxPlus(data *RenderingData) error {
+	//Current implementation only updates AppVhosts, does not suppport routing tag & LeaderVhost
 	config.RLock()
 	defer config.RUnlock()
-	allApps := db.ReadAllApps()
-	logger.WithFields(logrus.Fields{}).Info("Updating upstreams for the whitelisted drove tags")
-	for _, app := range allApps {
+	logger.WithFields(logrus.Fields{"apps": data.Apps}).Info("Updating upstreams for the whitelisted drove tags")
+	for _, app := range data.Apps {
 		var newFormattedServers []string
 		for _, t := range app.Hosts {
 			var hostAndPortMapping string
@@ -361,12 +355,8 @@ func reloadWorker() {
 		for {
 			select {
 			case <-ticker.C:
-				select {
-				case <-reloadSignalQueue:
-					reload() // Trigger reload on event
-				default:
-					logger.Info("No signal to reload config")
-				}
+				<-reloadSignalQueue
+				reload()
 			}
 		}
 	}()

@@ -59,8 +59,7 @@ http {
     }
     {{end}}
     {{end}}
-    {{- range $nid, $namespace := .Namespaces}}
-    {{- range $id, $app := $namespace.Apps}}
+    {{- range $id, $app := .Apps}}
     upstream {{$app.Vhost}} {
         {{- range $app.Hosts}}
         server {{ .Host }}:{{ .Port }};
@@ -79,6 +78,5 @@ http {
             proxy_pass http://{{$app.Vhost}};
         }
     }
-    {{end}}
     {{end}}
 }

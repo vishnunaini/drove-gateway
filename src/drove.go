@@ -45,16 +45,17 @@ type DroveEventsApiResponse struct {
 }
 
 type DroveClient struct {
-	namespace            string
-	syncPoint            CurrSyncPoint
-	httpClient           *http.Client
-	eventRefreshInterval int
+	namespace  string
+	syncPoint  CurrSyncPoint
+	httpClient *http.Client
 }
 
 type CurrSyncPoint struct {
 	sync.RWMutex
 	LastSyncTime int64
 }
+
+var droveClients map[string]*DroveClient
 
 func leaderController(endpoint string) *LeaderController {
 	if endpoint == "" {
@@ -198,11 +199,12 @@ func newDroveClient(name string) *DroveClient {
 				return http.ErrUseLastResponse
 			},
 		},
-		eventRefreshInterval: config.EventRefreshIntervalSec,
 	}
 }
 
-func pollingHandler(droveClient *DroveClient) {
+func pollingHandler(droveClient *DroveClient, reloadChannel chan<- bool, waitGroup *sync.WaitGroup) {
+	defer waitGroup.Done()
+	appsRefreshed := false
 	namespace := droveClient.namespace
 	logger.WithFields(logrus.Fields{
 		"at":        time.Now(),
@@ -234,7 +236,7 @@ func pollingHandler(droveClient *DroveClient) {
 				reloadNeeded = true
 			}
 			if reloadNeeded || leaderShifted {
-				refreshApps(droveClient.httpClient, namespace, leaderShifted)
+				appsRefreshed = refreshApps(droveClient.httpClient, namespace, leaderShifted)
 			} else {
 				logger.Debug("Irrelevant events ignored")
 			}
@@ -245,23 +247,60 @@ func pollingHandler(droveClient *DroveClient) {
 			}).Debug("New Events received")
 		}
 	}
+	reloadChannel <- appsRefreshed
 }
 
-func pollDroveEvents(name string, forceRefreshSignal chan bool) {
+func pollingEvents() {
+	var waitGroup sync.WaitGroup
+	reloadChannel := make(chan bool, len(droveClients))
+
+	for _, droveClient := range droveClients {
+		waitGroup.Add(1)
+		go pollingHandler(droveClient, reloadChannel, &waitGroup)
+	}
+
+	waitGroup.Wait()
+	close(reloadChannel)
+
+	reloadConfig := false
+	for result := range reloadChannel {
+		if result {
+			reloadConfig = true
+			break
+		}
+	}
+	logger.WithFields(logrus.Fields{
+		"reloadConfig": reloadConfig,
+	}).Info("Drove poll event result")
+
+	if reloadConfig {
+		reloadSignalQueue <- true
+	}
+
+}
+
+func schedulePollDroveEvents() {
 	go func() {
-		droveClient := newDroveClient(name)
-		ticker := time.NewTicker(time.Duration(droveClient.eventRefreshInterval) * time.Second)
+		ticker := time.NewTicker(time.Duration(config.EventRefreshIntervalSec) * time.Second)
 		for {
 			select {
 			case <-ticker.C:
-				logger.Info("Refreshing drove events as per schedule for namesapce:" + droveClient.namespace)
-				pollingHandler(droveClient)
-			case <-forceRefreshSignal:
-				logger.Info("Refreshing drove events due to force referesh namesapce:" + droveClient.namespace)
-				pollingHandler(droveClient)
+				logger.Info("Refreshing drove events as per schedule")
+				pollingEvents()
+			case <-refreshSignalQueue:
+				logger.Info("Refreshing drove events due to force referesh")
+				pollingEvents()
 			}
 		}
 	}()
+}
+
+func setupPollEvents() {
+	droveClients = make(map[string]*DroveClient)
+	for _, nsConfig := range config.DroveNamespaces {
+		droveClients[nsConfig.Name] = newDroveClient(nsConfig.Name)
+	}
+	schedulePollDroveEvents()
 }
 
 func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
@@ -336,6 +375,12 @@ func endpointHealth(namespace string) {
 			}
 		}
 	}()
+}
+
+func setupEndpointHealth() {
+	for _, nsConfig := range config.DroveNamespaces {
+		endpointHealth(nsConfig.Name)
+	}
 }
 
 func fetchApps(httpClient *http.Client, droveConfig DroveConfig, jsonapps *DroveApps) error {
@@ -491,7 +536,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 	return false
 }
 
-func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) error {
+func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) bool {
 	logger.Debug("Reloading config for namespace" + namespace)
 	start := time.Now()
 	droveConfig, er := db.ReadDroveConfig(namespace)
@@ -499,8 +544,7 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 		logger.WithFields(logrus.Fields{
 			"namespace": namespace,
 		}).Error("Error loading drove config")
-		er := errors.New("Error loading Drove Config")
-		return er
+		return false
 	}
 
 	jsonapps := DroveApps{}
@@ -515,7 +559,7 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 		}
 		go statsCount("reload.failed", 1)
 		go countDroveAppSyncErrors.WithLabelValues(namespace).Inc()
-		return err
+		return false
 	}
 	equal := syncAppsAndVhosts(droveConfig, &jsonapps, &vhosts)
 	lastConfigUpdated := true
@@ -529,29 +573,20 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 	//Ideally only lastConfigUpdated can dictate if reload is required
 	if equal && !leaderShifted && lastConfigUpdated {
 		logger.Debug("no config changes")
-		return nil
+		return false
 	}
 
-	triggerReload(namespace, !equal, leaderShifted, lastConfigUpdated)
+	logger.WithFields(logrus.Fields{
+		"namespace":         namespace,
+		"lastConfigUpdated": lastConfigUpdated,
+		"leaderShifted":     leaderShifted,
+		"appsChanged":       !equal,
+	}).Info("Config reload required") //logging exact reason of reload
+
 	elapsed := time.Since(start)
 	go observeAppRefreshTimeMetric(namespace, elapsed)
 	logger.WithFields(logrus.Fields{
 		"took": elapsed,
 	}).Info("Apps updated")
-	return nil
-}
-
-func triggerReload(namespace string, appsChanged, leaderShifted bool, lastConfigUpdated bool) {
-	logger.WithFields(logrus.Fields{
-		"namespace":         namespace,
-		"lastConfigUpdated": lastConfigUpdated,
-		"leaderShifted":     leaderShifted,
-		"appsChanged":       appsChanged,
-	}).Info("Trigging refresh") //logging exact reason of reload
-
-	select {
-	case reloadSignalQueue <- true: // add reload to channel, unless it is full of course.
-	default:
-		logger.Warn("reloadSignalQueue is full")
-	}
+	return true
 }

@@ -178,30 +178,6 @@ func (dm *DataManager) ReadLeader(namespace string) (LeaderController, error) {
 	return ns.Leader, nil //returning copy
 }
 
-func (dm *DataManager) ReadAllLeaders() []LeaderController {
-	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
-	defer dm.mu.RUnlock() // Ensure the lock is always released
-	operation := "ReadAllLeaders"
-
-	// Start the operation log
-	logger.WithFields(logrus.Fields{
-		"operation": operation,
-	}).Debug("Attempting to read namespace data")
-
-	var allLeaders []LeaderController
-
-	for _, data := range dm.namespaces {
-		allLeaders = append(allLeaders, data.Leader)
-	}
-	// Log success
-	logger.WithFields(logrus.Fields{
-		"operation": operation,
-		"allLeader": allLeaders,
-	}).Info("ReadAllLeaders successfully")
-
-	return allLeaders //returning copy
-}
-
 func (dm *DataManager) UpdateLeader(namespace string, leader LeaderController) error {
 	dm.mu.Lock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.Unlock() // Ensure the lock is always released
@@ -256,28 +232,6 @@ func (dm *DataManager) ReadApps(namespace string) (map[string]App, error) {
 	}).Info("ReadApp successfully")
 
 	return ns.Apps, nil //returning copy
-}
-
-func (dm *DataManager) ReadAllApps() map[string]App {
-	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
-	defer dm.mu.RUnlock() // Ensure the lock is always released
-	operation := "ReadAllApps"
-
-	allApps := make(map[string]App)
-
-	for _, data := range dm.namespaces {
-		for appId, appData := range data.Apps {
-			allApps[appId] = appData
-		}
-	}
-	// Log success
-	logger.WithFields(logrus.Fields{
-		"operation": operation,
-		"allApps":   allApps,
-	}).Info("ReadAllApps successfully")
-
-	return allApps //returning copy
-
 }
 
 func (dm *DataManager) UpdateApps(namespace string, apps map[string]App) error {
