@@ -139,8 +139,42 @@ func createRenderingData(data *RenderingData) {
 			LeaderVHost: nmData.Drove.LeaderVHost,
 			Leader:      nmData.Leader,
 		}
+		//Merging App if already exists
 		for appId, appData := range nmData.Apps {
-			allApps[appId] = appData //TODO:fix this
+			if existingAppData, ok := allApps[appId]; ok {
+				//Appending hosts
+				existingAppData.Hosts = append(existingAppData.Hosts, appData.Hosts...)
+
+				//adding same as that of app refresh logic
+				if existingAppData.Tags == nil {
+					existingAppData.Tags = make(map[string]string)
+				}
+
+				for tagK, tagV := range appData.Tags {
+					existingAppData.Tags[tagK] = tagV
+				}
+
+				for groupName, groupData := range appData.Groups {
+					if existingGroup, ok := existingAppData.Groups[groupName]; ok {
+						existingGroup.Hosts = append(existingGroup.Hosts, groupData.Hosts...)
+
+						if existingGroup.Tags == nil {
+							existingGroup.Tags = make(map[string]string)
+						}
+
+						for tn, tv := range groupData.Tags {
+							existingGroup.Tags[tn] = tv
+						}
+
+						existingAppData.Groups[groupName] = existingGroup
+					} else {
+						existingAppData.Groups[groupName] = groupData
+					}
+				}
+				allApps[appId] = existingAppData
+			} else {
+				allApps[appId] = appData
+			}
 		}
 	}
 	data.Apps = allApps
