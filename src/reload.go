@@ -145,30 +145,40 @@ func createRenderingData(data *RenderingData) {
 				//Appending hosts
 				existingAppData.Hosts = append(existingAppData.Hosts, appData.Hosts...)
 
-				//adding same as that of app refresh logic
+				//adding same as that of app refresh logic in drove client
 				if existingAppData.Tags == nil {
 					existingAppData.Tags = make(map[string]string)
 				}
-
-				for tagK, tagV := range appData.Tags {
-					existingAppData.Tags[tagK] = tagV
+				if appData.Tags != nil {
+					for tagK, tagV := range appData.Tags {
+						existingAppData.Tags[tagK] = tagV
+					}
 				}
 
-				for groupName, groupData := range appData.Groups {
-					if existingGroup, ok := existingAppData.Groups[groupName]; ok {
-						existingGroup.Hosts = append(existingGroup.Hosts, groupData.Hosts...)
+				if existingAppData.Groups == nil {
+					existingAppData.Groups = make(map[string]HostGroup)
+				}
 
-						if existingGroup.Tags == nil {
-							existingGroup.Tags = make(map[string]string)
+				if appData.Groups != nil {
+					for groupName, groupData := range appData.Groups {
+						if existingGroup, ok := existingAppData.Groups[groupName]; ok {
+
+							//Appending hosts
+							existingGroup.Hosts = append(existingGroup.Hosts, groupData.Hosts...)
+
+							if existingGroup.Tags == nil {
+								existingGroup.Tags = make(map[string]string)
+							}
+
+							if groupData.Tags != nil {
+								for tn, tv := range groupData.Tags {
+									existingGroup.Tags[tn] = tv
+								}
+							}
+							existingAppData.Groups[groupName] = existingGroup
+						} else {
+							existingAppData.Groups[groupName] = groupData
 						}
-
-						for tn, tv := range groupData.Tags {
-							existingGroup.Tags[tn] = tv
-						}
-
-						existingAppData.Groups[groupName] = existingGroup
-					} else {
-						existingAppData.Groups[groupName] = groupData
 					}
 				}
 				allApps[appId] = existingAppData
