@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	nplus "github.com/nginxinc/nginx-plus-go-client/client"
 )
 
 type NamespaceRenderingData struct {
@@ -271,8 +272,7 @@ func nginxPlus(data *RenderingData) error {
 		}
 
 		client := &http.Client{Transport: tr}
-		c := NginxClient{endpoint, client}
-		nginxClient, error := NewNginxClient(c.httpClient, c.apiEndpoint)
+		nginxClient, error := nplus.NewNginxClient(endpoint,nplus.WithHTTPClient(client),nplus.WithAPIVersion(6))
 		if error != nil {
 			logger.WithFields(logrus.Fields{
 				"error": error,
@@ -280,10 +280,10 @@ func nginxPlus(data *RenderingData) error {
 			return error
 		}
 		upstreamtocheck := app.Vhost
-		var finalformattedServers []UpstreamServer
+		var finalformattedServers []nplus.UpstreamServer
 
-		for _, server := range newFormattedServers {
-			formattedServer := UpstreamServer{Server: server, MaxFails: config.MaxFailsUpstream, FailTimeout: config.FailTimeoutUpstream, SlowStart: config.SlowStartUpstream}
+		for _, server := range nplus.newFormattedServers {
+			formattedServer := nplus.UpstreamServer{Server: server, MaxFails: config.MaxFailsUpstream, FailTimeout: config.FailTimeoutUpstream, SlowStart: config.SlowStartUpstream}
 			finalformattedServers = append(finalformattedServers, formattedServer)
 		}
 
