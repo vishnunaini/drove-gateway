@@ -525,7 +525,7 @@ func nginxPlus() error {
 
 		client := &http.Client{Transport: tr}
 		nginxClient, error := nplus.NewNginxClient(endpoint,nplus.WithHTTPClient(client),nplus.WithAPIVersion(
-			6))
+			8))
 		if error != nil {
 			logger.WithFields(logrus.Fields{
 				"error": error,
@@ -539,30 +539,38 @@ func nginxPlus() error {
 			formattedServer := nplus.UpstreamServer{Server: server, MaxFails: config.MaxFailsUpstream, FailTimeout: config.FailTimeoutUpstream, SlowStart: config.SlowStartUpstream}
 			finalformattedServers = append(finalformattedServers, formattedServer)
 		}
+                err := nginxClient.CheckIfUpstreamExists(upstreamtocheck)
+                if err != nil {
+                        added, deleted, updated, error := nginxClient.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
 
-		added, deleted, updated, error := nginxClient.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
-
-		if added != nil {
-			logger.WithFields(logrus.Fields{
-				"nginx upstreams added": added,
-			}).Info("nginx upstreams added")
-		}
-		if deleted != nil {
-			logger.WithFields(logrus.Fields{
-				"nginx upstreams deleted": deleted,
-			}).Info("nginx upstreams deleted")
-		}
-		if updated != nil {
-			logger.WithFields(logrus.Fields{
-				"nginx upsteams updated": updated,
-			}).Info("nginx upstreams updated")
-		}
-		if error != nil {
-			logger.WithFields(logrus.Fields{
-				"error": error,
-			}).Error("unable to update nginx upstreams")
-			return error
-		}
+                        if added != nil {
+                                logger.WithFields(logrus.Fields{
+                                        "nginx upstreams added": added,
+                                }).Info("nginx upstreams added")
+                        }
+                        if deleted != nil {
+                                logger.WithFields(logrus.Fields{
+                                        "nginx upstreams deleted": deleted,
+                                }).Info("nginx upstreams deleted")
+                        }
+                        if updated != nil {
+                                logger.WithFields(logrus.Fields{
+                                        "nginx upsteams updated": updated,
+                                }).Info("nginx upstreams updated")
+                        }
+                        if error != nil {
+                                logger.WithFields(logrus.Fields{
+                                        "error": error,
+                                }).Error("unable to update nginx upstreams")
+                                return error
+                        }
+                } else {
+                                logger.WithFields(logrus.Fields{
+                                        "Upstream doesn't exist in Nginx": upstreamtocheck,
+                                }).Error("Config reload required to add the upstream back")
+                                return err
+                        reloadAllApps(true)
+                }
 	}
 	return nil
 }
