@@ -290,7 +290,7 @@ func nginxPlus(data *RenderingData) error {
 		upstreamtocheck := app.Vhost
 		var finalformattedServers []nplus.UpstreamServer
 
-		for _, server := range nplus.newFormattedServers {
+		for _, server := range newFormattedServers {
 			formattedServer := nplus.UpstreamServer{Server: server, MaxFails: config.MaxFailsUpstream, FailTimeout: config.FailTimeoutUpstream, SlowStart: config.SlowStartUpstream}
 			finalformattedServers = append(finalformattedServers, formattedServer)
 		}
