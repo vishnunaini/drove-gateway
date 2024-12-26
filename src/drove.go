@@ -18,6 +18,7 @@ import (
 	"sync"
 	"text/template"
 	"time"
+	"context"
 
 	"github.com/sirupsen/logrus"
 	nplus "github.com/nginxinc/nginx-plus-go-client/client"
@@ -488,7 +489,7 @@ func nginxPlus() error {
 
 	logger.WithFields(logrus.Fields{
 		"nginx": config.Nginxplusapiaddr,
-	}).Info("endpoint")
+	}).Debug("endpoint")
 
 	endpoint := "http://" + config.Nginxplusapiaddr + "/api"
 	//Create transport here for connection re-use
@@ -553,14 +554,25 @@ func nginxPlus() error {
 
 			// Now upstream should have servers, update earlier state to let UpdateHTTPServers take over
 			//But wait from some time for nginx to actually update it's state. Consecutive calls would still return a 404 if you don't wait long enough
-			if error != nil {
-				time.Sleep(100 * time.Millisecond)
-			}
+                        if error != nil {
+                                ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+                                defer cancel()
+                                err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
+                                for err != nil {
+                                        select {
+                                                case <-ctx.Done():
+                                                        logger.WithFields(logrus.Fields{
+                                                                "Adding fresh upstream for": upstreamtocheck,
+                                                        }).Error("Context timeout waiting for CheckIfUpstreamExists")
+                                                default:
+                                                        err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
+                                        }
+                                }
+                                cancel()
+                        }
 
-			err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
-
-		}
-		 if err == nil {
+               }
+               if err == nil {
                         added, deleted, updated, error := nginxClient.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
 
                         if added != nil {
@@ -585,10 +597,10 @@ func nginxPlus() error {
                                 return error
                         }
                 } else {
-			return err
+                       return err
                 }
-	}
-	return nil
+       }
+       return nil
 }
 
 func checkTmpl() error {
