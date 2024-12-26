@@ -18,6 +18,7 @@ import (
 	"sync"
 	"text/template"
 	"time"
+	"context"
 
 	"github.com/sirupsen/logrus"
 	nplus "github.com/nginxinc/nginx-plus-go-client/client"
@@ -485,6 +486,28 @@ func writeConf() error {
 func nginxPlus() error {
 	config.RLock()
 	defer config.RUnlock()
+
+	logger.WithFields(logrus.Fields{
+		"nginx": config.Nginxplusapiaddr,
+	}).Debug("endpoint")
+
+	endpoint := "http://" + config.Nginxplusapiaddr + "/api"
+	//Create transport here for connection re-use
+	tr := &http.Transport{
+		MaxIdleConns:       30,
+		DisableCompression: true,
+	}
+
+	client := &http.Client{Transport: tr}
+	nginxClient, error := nplus.NewNginxClient(endpoint,nplus.WithHTTPClient(client),nplus.WithAPIVersion(
+		8))
+	if error != nil {
+		logger.WithFields(logrus.Fields{
+			"error": error,
+		}).Error("unable to make call to nginx plus")
+		return error
+	}
+
 	logger.WithFields(logrus.Fields{}).Info("Updating upstreams for the whitelisted drove tags")
 	for _, app := range config.Apps {
 		var newFormattedServers []string
@@ -512,26 +535,6 @@ func nginxPlus() error {
 			"upstreams": newFormattedServers,
 		}).Info("nginx upstreams")
 
-		logger.WithFields(logrus.Fields{
-			"nginx": config.Nginxplusapiaddr,
-		}).Info("endpoint")
-
-		endpoint := "http://" + config.Nginxplusapiaddr + "/api"
-
-		tr := &http.Transport{
-			MaxIdleConns:       30,
-			DisableCompression: true,
-		}
-
-		client := &http.Client{Transport: tr}
-		nginxClient, error := nplus.NewNginxClient(endpoint,nplus.WithHTTPClient(client),nplus.WithAPIVersion(
-			8))
-		if error != nil {
-			logger.WithFields(logrus.Fields{
-				"error": error,
-			}).Error("unable to make call to nginx plus")
-			return error
-		}
 		upstreamtocheck := app.Vhost
 		var finalformattedServers []nplus.UpstreamServer
 
@@ -539,8 +542,38 @@ func nginxPlus() error {
 			formattedServer := nplus.UpstreamServer{Server: server, MaxFails: config.MaxFailsUpstream, FailTimeout: config.FailTimeoutUpstream, SlowStart: config.SlowStartUpstream}
 			finalformattedServers = append(finalformattedServers, formattedServer)
 		}
+		// If upstream has no servers, UpdateHTTPServers returns error as in-line GetHTTPServers returns error. server ID 0 needs to be explicitly initiated by a PATCH
                 err := nginxClient.CheckIfUpstreamExists(upstreamtocheck)
-                if err != nil {
+		if err != nil {
+			// First add atleast one server to initialise upstream to support UpdateHTTPServers
+			logger.WithFields(logrus.Fields{
+				"Adding fresh upstream for": upstreamtocheck,
+			}).Info("Adding first server for upstream")
+			//Adding first server for server ID 0. ID 0 needs to be updated if state file is resurrected when a vhost gets resurrected. Create ID 0 otherwise.
+			error := nginxClient.UpdateHTTPServer(upstreamtocheck, finalformattedServers[0])
+
+			// Now upstream should have servers, update earlier state to let UpdateHTTPServers take over
+			//But wait from some time for nginx to actually update it's state. Consecutive calls would still return a 404 if you don't wait long enough
+                        if error != nil {
+                                ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+                                defer cancel()
+                                err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
+                                for err != nil {
+                                        select {
+                                                case <-ctx.Done():
+                                                        logger.WithFields(logrus.Fields{
+                                                                "Adding fresh upstream for": upstreamtocheck,
+                                                        }).Error("Context timeout waiting for CheckIfUpstreamExists")
+                                                default:
+							time.Sleep(5 * time.Millisecond)
+                                                        err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
+                                        }
+                                }
+                                cancel()
+                        }
+
+               }
+               if err == nil {
                         added, deleted, updated, error := nginxClient.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
 
                         if added != nil {
@@ -565,14 +598,10 @@ func nginxPlus() error {
                                 return error
                         }
                 } else {
-                                logger.WithFields(logrus.Fields{
-                                        "Upstream doesn't exist in Nginx": upstreamtocheck,
-                                }).Error("Config reload required to add the upstream back")
-                                return err
-                        reloadAllApps(true)
+                       return err
                 }
-	}
-	return nil
+       }
+       return nil
 }
 
 func checkTmpl() error {
