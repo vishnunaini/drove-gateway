@@ -565,6 +565,7 @@ func nginxPlus() error {
                                                                 "Adding fresh upstream for": upstreamtocheck,
                                                         }).Error("Context timeout waiting for CheckIfUpstreamExists")
                                                 default:
+							time.Sleep(5 * time.Millisecond)
                                                         err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
                                         }
                                 }
