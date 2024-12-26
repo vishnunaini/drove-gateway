@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -233,6 +234,28 @@ func nginxPlus(data *RenderingData) error {
 	//Current implementation only updates AppVhosts, does not suppport routing tag & LeaderVhost
 	config.RLock()
 	defer config.RUnlock()
+
+	logger.WithFields(logrus.Fields{
+		"nginx": config.Nginxplusapiaddr,
+	}).Debug("endpoint")
+
+	endpoint := "http://" + config.Nginxplusapiaddr + "/api"
+	//Create transport here for connection re-use
+	tr := &http.Transport{
+		MaxIdleConns:       30,
+		DisableCompression: true,
+	}
+
+	client := &http.Client{Transport: tr}
+	nginxClient, error := nplus.NewNginxClient(endpoint, nplus.WithHTTPClient(client), nplus.WithAPIVersion(
+		8))
+	if error != nil {
+		logger.WithFields(logrus.Fields{
+			"error": error,
+		}).Error("unable to make call to nginx plus")
+		return error
+	}
+
 	logger.WithFields(logrus.Fields{"apps": data.Apps}).Info("Updating upstreams for the whitelisted drove tags")
 	for _, app := range data.Apps {
 		var newFormattedServers []string
@@ -264,21 +287,6 @@ func nginxPlus(data *RenderingData) error {
 			"nginx": config.Nginxplusapiaddr,
 		}).Info("endpoint")
 
-		endpoint := "http://" + config.Nginxplusapiaddr + "/api"
-
-		tr := &http.Transport{
-			MaxIdleConns:       30,
-			DisableCompression: true,
-		}
-
-		client := &http.Client{Transport: tr}
-		nginxClient, error := nplus.NewNginxClient(endpoint,nplus.WithHTTPClient(client),nplus.WithAPIVersion(6))
-		if error != nil {
-			logger.WithFields(logrus.Fields{
-				"error": error,
-			}).Error("unable to make call to nginx plus")
-			return error
-		}
 		upstreamtocheck := app.Vhost
 		var finalformattedServers []nplus.UpstreamServer
 
@@ -286,29 +294,62 @@ func nginxPlus(data *RenderingData) error {
 			formattedServer := nplus.UpstreamServer{Server: server, MaxFails: config.MaxFailsUpstream, FailTimeout: config.FailTimeoutUpstream, SlowStart: config.SlowStartUpstream}
 			finalformattedServers = append(finalformattedServers, formattedServer)
 		}
+		err := nginxClient.CheckIfUpstreamExists(upstreamtocheck)
+		if err != nil {
+			// First add atleast one server to initialise upstream to support UpdateHTTPServers
+			logger.WithFields(logrus.Fields{
+				"Adding fresh upstream for": upstreamtocheck,
+			}).Info("Adding first server for upstream")
+			//Adding first server for server ID 0. ID 0 needs to be updated if state file is resurrected when a vhost gets resurrected. Create ID 0 otherwise.
+			error := nginxClient.UpdateHTTPServer(upstreamtocheck, finalformattedServers[0])
 
-		added, deleted, updated, error := nginxClient.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
+			// Now upstream should have servers, update earlier state to let UpdateHTTPServers take over
+			//But wait from some time for nginx to actually update it's state. Consecutive calls would still return a 404 if you don't wait long enough
+			if error != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+				defer cancel()
+				err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
+				for err != nil {
+					select {
+					case <-ctx.Done():
+						logger.WithFields(logrus.Fields{
+							"Adding fresh upstream for": upstreamtocheck,
+						}).Error("Context timeout waiting for CheckIfUpstreamExists")
+					default:
+						time.Sleep(5 * time.Millisecond)
+						err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
+					}
+				}
+				cancel()
+			}
 
-		if added != nil {
-			logger.WithFields(logrus.Fields{
-				"nginx upstreams added": added,
-			}).Info("nginx upstreams added")
 		}
-		if deleted != nil {
-			logger.WithFields(logrus.Fields{
-				"nginx upstreams deleted": deleted,
-			}).Info("nginx upstreams deleted")
-		}
-		if updated != nil {
-			logger.WithFields(logrus.Fields{
-				"nginx upsteams updated": updated,
-			}).Info("nginx upstreams updated")
-		}
-		if error != nil {
-			logger.WithFields(logrus.Fields{
-				"error": error,
-			}).Error("unable to update nginx upstreams")
-			return error
+		if err == nil {
+			added, deleted, updated, error := nginxClient.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
+
+			if added != nil {
+				logger.WithFields(logrus.Fields{
+					"nginx upstreams added": added,
+				}).Info("nginx upstreams added")
+			}
+			if deleted != nil {
+				logger.WithFields(logrus.Fields{
+					"nginx upstreams deleted": deleted,
+				}).Info("nginx upstreams deleted")
+			}
+			if updated != nil {
+				logger.WithFields(logrus.Fields{
+					"nginx upsteams updated": updated,
+				}).Info("nginx upstreams updated")
+			}
+			if error != nil {
+				logger.WithFields(logrus.Fields{
+					"error": error,
+				}).Error("unable to update nginx upstreams")
+				return error
+			}
+		} else {
+			return err
 		}
 	}
 	return nil
