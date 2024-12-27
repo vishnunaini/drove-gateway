@@ -171,7 +171,7 @@ func setupDataManager() {
 }
 
 // Reload signal with buffer of two, because we dont really need more.
-var appsUpdateSignalQueue = make(chan bool, 2)
+var appsConfigUpdateSignalQueue = make(chan bool, 2)
 var eventRefreshSignalQueue = make(chan bool, 2)
 
 // Global http transport for connection reuse

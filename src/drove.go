@@ -252,18 +252,18 @@ func pollingHandler(droveClient *DroveClient, appsConfigUpdateChannel chan<- boo
 
 func pollingEvents() {
 	var waitGroup sync.WaitGroup
-	appsUpdateChannel := make(chan bool, len(droveClients))
+	appsConfigUpdateChannel := make(chan bool, len(droveClients))
 
 	for _, droveClient := range droveClients {
 		waitGroup.Add(1)
-		go pollingHandler(droveClient, appsUpdateChannel, &waitGroup)
+		go pollingHandler(droveClient, appsConfigUpdateChannel, &waitGroup)
 	}
 
 	waitGroup.Wait()
-	close(appsUpdateChannel)
+	close(appsConfigUpdateChannel)
 
 	appsUpdated := false
-	for result := range appsUpdateChannel {
+	for result := range appsConfigUpdateChannel {
 		if result {
 			appsUpdated = true
 			break
@@ -274,7 +274,7 @@ func pollingEvents() {
 	}).Info("Drove poll event result")
 
 	if appsUpdated {
-		appsUpdateSignalQueue <- true
+		appsConfigUpdateSignalQueue <- true
 	}
 
 }

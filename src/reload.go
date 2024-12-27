@@ -449,7 +449,7 @@ func reloadWorker() {
 		for {
 			select {
 			case <-ticker.C:
-				<-appsUpdateSignalQueue
+				<-appsConfigUpdateSignalQueue
 				reload()
 			}
 		}
