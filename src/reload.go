@@ -15,8 +15,8 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	nplus "github.com/nginxinc/nginx-plus-go-client/client"
+	"github.com/sirupsen/logrus"
 )
 
 type NamespaceRenderingData struct {
@@ -294,6 +294,7 @@ func nginxPlus(data *RenderingData) error {
 			formattedServer := nplus.UpstreamServer{Server: server, MaxFails: config.MaxFailsUpstream, FailTimeout: config.FailTimeoutUpstream, SlowStart: config.SlowStartUpstream}
 			finalformattedServers = append(finalformattedServers, formattedServer)
 		}
+		// If upstream has no servers, UpdateHTTPServers returns error as in-line GetHTTPServers returns error. server ID 0 needs to be explicitly initiated by a PATCH
 		err := nginxClient.CheckIfUpstreamExists(upstreamtocheck)
 		if err != nil {
 			// First add atleast one server to initialise upstream to support UpdateHTTPServers
@@ -440,7 +441,7 @@ func reloadWorker() {
 		for {
 			select {
 			case <-ticker.C:
-				<-reloadSignalQueue
+				<-upstreamsUpdateSignalQueue
 				reload()
 			}
 		}
