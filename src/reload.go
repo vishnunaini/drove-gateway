@@ -282,15 +282,11 @@ func nginxPlus(data *RenderingData) error {
 
 		logger.WithFields(logrus.Fields{
 			"vhost": app.Vhost,
-		}).Info("app.vhost")
+		}).Debug("app.vhost")
 
 		logger.WithFields(logrus.Fields{
 			"upstreams": newFormattedServers,
-		}).Info("nginx upstreams")
-
-		logger.WithFields(logrus.Fields{
-			"nginx": config.Nginxplusapiaddr,
-		}).Info("endpoint")
+		}).Debug("nginx upstreams")
 
 		upstreamtocheck := app.Vhost
 		var finalformattedServers []nplus.UpstreamServer
@@ -335,21 +331,25 @@ func nginxPlus(data *RenderingData) error {
 
 			if added != nil {
 				logger.WithFields(logrus.Fields{
-					"nginx upstreams added": added,
+					"vhost":           upstreamtocheck,
+					"upstreams added": added,
 				}).Info("nginx upstreams added")
 			}
 			if deleted != nil {
 				logger.WithFields(logrus.Fields{
-					"nginx upstreams deleted": deleted,
+					"vhost":             upstreamtocheck,
+					"upstreams deleted": deleted,
 				}).Info("nginx upstreams deleted")
 			}
 			if updated != nil {
 				logger.WithFields(logrus.Fields{
-					"nginx upsteams updated": updated,
+					"vhost":             upstreamtocheck,
+					"upstreams updated": updated,
 				}).Info("nginx upstreams updated")
 			}
 			if error != nil {
 				logger.WithFields(logrus.Fields{
+					"vhost": upstreamtocheck,
 					"error": error,
 				}).Error("unable to update nginx upstreams")
 				return error
