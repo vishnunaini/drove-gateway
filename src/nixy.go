@@ -171,8 +171,8 @@ func setupDataManager() {
 }
 
 // Reload signal with buffer of two, because we dont really need more.
-var reloadSignalQueue = make(chan bool, 2)
-var refreshSignalQueue = make(chan bool, 2)
+var appsUpdateSignalQueue = make(chan bool, 2)
+var eventRefreshSignalQueue = make(chan bool, 2)
 
 // Global http transport for connection reuse
 var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
@@ -227,7 +227,7 @@ func nixyReload(w http.ResponseWriter, r *http.Request) {
 	}).Info("Reload triggered via /v1/reload")
 	queued := true
 	select {
-	case refreshSignalQueue <- true: // Add referesh to our signal channel, unless it is full of course.
+	case eventRefreshSignalQueue <- true: // Add referesh to our signal channel, unless it is full of course.
 	default:
 		queued = false
 	}

@@ -197,7 +197,7 @@ func createRenderingData(data *RenderingData) {
 	data.Apps = allApps
 	logger.WithFields(logrus.Fields{
 		"data": data,
-	}).Info("Rendering data generated")
+	}).Debug("Rendering data generated")
 	return
 }
 
@@ -446,7 +446,7 @@ func reloadWorker() {
 		for {
 			select {
 			case <-ticker.C:
-				<-reloadSignalQueue
+				<-appsUpdateSignalQueue
 				reload()
 			}
 		}

@@ -202,7 +202,7 @@ func newDroveClient(name string) *DroveClient {
 	}
 }
 
-func pollingHandler(droveClient *DroveClient, reloadChannel chan<- bool, waitGroup *sync.WaitGroup) {
+func pollingHandler(droveClient *DroveClient, appsConfigUpdateChannel chan<- bool, waitGroup *sync.WaitGroup) {
 	defer waitGroup.Done()
 	appsRefreshed := false
 	namespace := droveClient.namespace
@@ -228,14 +228,14 @@ func pollingHandler(droveClient *DroveClient, reloadChannel chan<- bool, waitGro
 				"namespace": namespace,
 				"localTime": time.Now(),
 			}).Info("Events received")
-			reloadNeeded := false
+			appsConfigUpdateNeeded := false
 			if _, ok := eventSummary.EventsCount["APP_STATE_CHANGE"]; ok {
-				reloadNeeded = true
+				appsConfigUpdateNeeded = true
 			}
 			if _, ok := eventSummary.EventsCount["INSTANCE_STATE_CHANGE"]; ok {
-				reloadNeeded = true
+				appsConfigUpdateNeeded = true
 			}
-			if reloadNeeded || leaderShifted {
+			if appsConfigUpdateNeeded || leaderShifted {
 				appsRefreshed = refreshApps(droveClient.httpClient, namespace, leaderShifted)
 			} else {
 				logger.Debug("Irrelevant events ignored")
@@ -247,34 +247,34 @@ func pollingHandler(droveClient *DroveClient, reloadChannel chan<- bool, waitGro
 			}).Debug("New Events received")
 		}
 	}
-	reloadChannel <- appsRefreshed
+	appsConfigUpdateChannel <- appsRefreshed
 }
 
 func pollingEvents() {
 	var waitGroup sync.WaitGroup
-	reloadChannel := make(chan bool, len(droveClients))
+	appsUpdateChannel := make(chan bool, len(droveClients))
 
 	for _, droveClient := range droveClients {
 		waitGroup.Add(1)
-		go pollingHandler(droveClient, reloadChannel, &waitGroup)
+		go pollingHandler(droveClient, appsUpdateChannel, &waitGroup)
 	}
 
 	waitGroup.Wait()
-	close(reloadChannel)
+	close(appsUpdateChannel)
 
-	reloadConfig := false
-	for result := range reloadChannel {
+	appsUpdated := false
+	for result := range appsUpdateChannel {
 		if result {
-			reloadConfig = true
+			appsUpdated = true
 			break
 		}
 	}
 	logger.WithFields(logrus.Fields{
-		"reloadConfig": reloadConfig,
+		"upstreamsUpdated": appsUpdated,
 	}).Info("Drove poll event result")
 
-	if reloadConfig {
-		reloadSignalQueue <- true
+	if appsUpdated {
+		appsUpdateSignalQueue <- true
 	}
 
 }
@@ -287,7 +287,7 @@ func schedulePollDroveEvents() {
 			case <-ticker.C:
 				logger.Info("Refreshing drove events as per schedule")
 				pollingEvents()
-			case <-refreshSignalQueue:
+			case <-eventRefreshSignalQueue:
 				logger.Info("Refreshing drove events due to force referesh")
 				pollingEvents()
 			}
@@ -464,7 +464,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 							"tag":   droveConfig.RoutingTag,
 							"vhost": newapp.Vhost,
 							"value": tagValue,
-						}).Info("routing tag found")
+						}).Debug("routing tag found")
 						groupName = tagValue
 					} else {
 
@@ -572,7 +572,7 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 	}
 	//Ideally only lastConfigUpdated can dictate if reload is required
 	if equal && !leaderShifted && lastConfigUpdated {
-		logger.Debug("no config changes")
+		logger.Debug("no config or vhost changes")
 		return false
 	}
 
@@ -581,7 +581,7 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 		"lastConfigUpdated": lastConfigUpdated,
 		"leaderShifted":     leaderShifted,
 		"appsChanged":       !equal,
-	}).Info("Config reload required") //logging exact reason of reload
+	}).Info("Config or vhosts update required") //logging exact reason of reload
 
 	elapsed := time.Since(start)
 	go observeAppRefreshTimeMetric(namespace, elapsed)
