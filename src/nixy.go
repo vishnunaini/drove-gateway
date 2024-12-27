@@ -153,7 +153,7 @@ func setloglevel() {
 	case "error":
 		logLevel = logrus.ErrorLevel
 	default:
-		logger.Error("unknown loglevel")
+		logger.Error("unknown loglevel. Defaulting to info")
 		logLevel = logrus.InfoLevel
 	}
 
@@ -224,7 +224,7 @@ func validateConfig() error {
 func nixyReload(w http.ResponseWriter, r *http.Request) {
 	logger.WithFields(logrus.Fields{
 		"client": r.RemoteAddr,
-	}).Info("Reload triggered")
+	}).Info("Reload triggered via /v1/reload")
 	queued := true
 	select {
 	case refreshSignalQueue <- true: // Add referesh to our signal channel, unless it is full of course.

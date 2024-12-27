@@ -56,12 +56,12 @@ func reload() error {
 	} else {
 		//Nginx plus is enabled
 		if config.NginxReloadDisabled {
-			logger.Warn("Template reload has been disabled")
+			logger.Debug("Template reload has been disabled")
 		} else {
 			vhosts := db.ReadAllKnownVhosts()
 			lastKnownVhosts := db.ReadLastKnownVhosts()
 			if !reflect.DeepEqual(vhosts, lastKnownVhosts) {
-				logger.Info("Need to reload config")
+				logger.Info("Vhost changed detected. Need to reload config")
 				err = updateAndReloadConfig(&data)
 				if err != nil {
 					logger.WithFields(logrus.Fields{
@@ -86,7 +86,7 @@ func reload() error {
 	elapsed := time.Since(start)
 	logger.WithFields(logrus.Fields{
 		"took": elapsed,
-	}).Info("config reloaded successfully")
+	}).Debug("reload worker completed")
 	return nil
 
 }
@@ -116,7 +116,7 @@ func updateAndReloadConfig(data *RenderingData) error {
 		elapsed := time.Since(start)
 		logger.WithFields(logrus.Fields{
 			"took": elapsed,
-		}).Info("config updated successfully")
+		}).Debug("config updated and reloaded successfully")
 		go statsCount("reload.success", 1)
 		go statsTiming("reload.time", elapsed)
 		go countSuccessfulReloads.Inc()
@@ -261,7 +261,7 @@ func nginxPlus(data *RenderingData) error {
 		return error
 	}
 
-	logger.WithFields(logrus.Fields{"apps": data.Apps}).Info("Updating upstreams for the whitelisted drove tags")
+	logger.WithFields(logrus.Fields{"apps": data.Apps}).Debug("Updating upstreams for the whitelisted drove vhosts")
 	for _, app := range data.Apps {
 		var newFormattedServers []string
 		for _, t := range app.Hosts {

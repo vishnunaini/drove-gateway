@@ -183,7 +183,7 @@ func refreshLeaderData(namespace string) bool {
 			}).Info("New leader being set")
 			return true
 		} else {
-			logrus.Warn("Leade struct generation failed")
+			logrus.Error("Leader struct generation failed")
 		}
 	}
 	return false

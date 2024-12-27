@@ -146,7 +146,7 @@ func (dm *DataManager) ReadLastTimestamp(namespace string) (time.Time, error) {
 		"operation": operation,
 		"namespace": namespace,
 		"Timestamp": ns.Timestamp,
-	}).Info("ReadLastTimestamps successfully")
+	}).Debug("ReadLastTimestamps successfully")
 
 	return ns.Timestamp, nil //returning copy
 }
@@ -173,7 +173,7 @@ func (dm *DataManager) ReadLeader(namespace string) (LeaderController, error) {
 		"operation": operation,
 		"namespace": namespace,
 		"leader":    ns.Leader,
-	}).Info("ReadLeader successfully")
+	}).Debug("ReadLeader successfully")
 
 	return ns.Leader, nil //returning copy
 }
@@ -203,7 +203,7 @@ func (dm *DataManager) UpdateLeader(namespace string, leader LeaderController) e
 		"namespace": namespace,
 		"leader":    ns.Leader,
 		"time":      ns.Timestamp,
-	}).Info("UpdateLeader data finished successfully")
+	}).Debug("UpdateLeader data finished successfully")
 	return nil
 }
 
@@ -229,7 +229,7 @@ func (dm *DataManager) ReadApps(namespace string) (map[string]App, error) {
 		"operation": operation,
 		"namespace": namespace,
 		"apps":      ns.Apps,
-	}).Info("ReadApp successfully")
+	}).Debug("ReadApp successfully")
 
 	return ns.Apps, nil //returning copy
 }
@@ -259,7 +259,7 @@ func (dm *DataManager) UpdateApps(namespace string, apps map[string]App) error {
 		"namespace": namespace,
 		"apps":      dm.namespaces[namespace].Apps,
 		"time":      dm.namespaces[namespace].Timestamp,
-	}).Info("UpdateApps finished successfully")
+	}).Debug("UpdateApps finished successfully")
 	return nil
 }
 
@@ -285,7 +285,7 @@ func (dm *DataManager) ReadKnownVhosts(namespace string) (Vhosts, error) {
 		"operation":   operation,
 		"namespace":   namespace,
 		"knownVHosts": ns.KnownVHosts,
-	}).Info("ReadKnownVhosts successfully")
+	}).Debug("ReadKnownVhosts successfully")
 
 	return ns.KnownVHosts, nil //returning copy
 }
@@ -308,7 +308,7 @@ func (dm *DataManager) ReadAllKnownVhosts() Vhosts {
 	logger.WithFields(logrus.Fields{
 		"operation": operation,
 		"allApps":   allKnownVhosts,
-	}).Info("ReadAllKnownVhosts successfully")
+	}).Debug("ReadAllKnownVhosts successfully")
 
 	return allKnownVhosts //returning copy
 }
@@ -338,7 +338,7 @@ func (dm *DataManager) UpdateKnownVhosts(namespace string, KnownVHosts Vhosts) e
 		"namespace":  namespace,
 		"knownHosts": dm.namespaces[namespace].KnownVHosts,
 		"time":       dm.namespaces[namespace].Timestamp,
-	}).Info("UpdateKnownVhosts finished successfully")
+	}).Debug("UpdateKnownVhosts finished successfully")
 	return nil
 }
 
@@ -351,7 +351,7 @@ func (dm *DataManager) ReadLastReloadTimestamp() time.Time {
 	logger.WithFields(logrus.Fields{
 		"operation":           operation,
 		"LastReloadTimestamp": dm.LastReloadTimestamp,
-	}).Info("ReadLoadedTime successfully")
+	}).Debug("ReadLoadedTime successfully")
 
 	return dm.LastReloadTimestamp //returning copy
 }
@@ -365,7 +365,7 @@ func (dm *DataManager) ReadLastKnownVhosts() Vhosts {
 	logger.WithFields(logrus.Fields{
 		"operation":       operation,
 		"LastKnownVhosts": dm.LastKnownVhosts,
-	}).Info("LastKnownVhosts successfully")
+	}).Debug("LastKnownVhosts successfully")
 
 	return dm.LastKnownVhosts //returning copy
 }
@@ -381,7 +381,7 @@ func (dm *DataManager) UpdateLastKnownVhosts(inLastKnownVhosts Vhosts) error {
 	logger.WithFields(logrus.Fields{
 		"operation":       operation,
 		"LastKnownVhosts": dm.LastKnownVhosts,
-	}).Info("UpdateLastKnownVhosts finished successfully")
+	}).Debug("UpdateLastKnownVhosts finished successfully")
 	return nil
 }
 
@@ -393,7 +393,7 @@ func (dm *DataManager) ReadAllNamespace() map[string]NamespaceData {
 	// Start the operation log
 	logger.WithFields(logrus.Fields{
 		"operation": operation,
-	}).Info("ReadAllNamespace data successfully")
+	}).Debug("ReadAllNamespace data successfully")
 
 	return dm.namespaces //returning copy
 }
@@ -408,7 +408,7 @@ func (dm *DataManager) ReadStaticData() StaticConfig {
 	logger.WithFields(logrus.Fields{
 		"operation":  operation,
 		"staticData": dm.StaticData,
-	}).Info("ReadStaticData successfully")
+	}).Debug("ReadStaticData successfully")
 
 	return dm.StaticData //returning copy
 }
