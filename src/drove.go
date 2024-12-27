@@ -270,7 +270,7 @@ func pollingEvents() {
 		}
 	}
 	logger.WithFields(logrus.Fields{
-		"upstreamsUpdated": appsUpdated,
+		"appsUpdated": appsUpdated,
 	}).Info("Drove poll event result")
 
 	if appsUpdated {
@@ -563,7 +563,7 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 	}
 	equal := syncAppsAndVhosts(droveConfig, &jsonapps, &vhosts)
 	if equal && !leaderShifted {
-		logger.Debug("no config changes")
+		logger.Debug("no relevant App Data changes")
 		return false
 	}
 
@@ -571,12 +571,12 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 		"namespace":     namespace,
 		"leaderShifted": leaderShifted,
 		"appsChanged":   !equal,
-	}).Info("Config or vhosts update required") //logging exact reason of reload
+	}).Debug("Apps Data change required because of") //logging exact reason of potential reload
 
 	elapsed := time.Since(start)
 	go observeAppRefreshTimeMetric(namespace, elapsed)
 	logger.WithFields(logrus.Fields{
 		"took": elapsed,
-	}).Info("Apps updated")
+	}).Debug("Apps update")
 	return true
 }

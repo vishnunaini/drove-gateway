@@ -61,7 +61,7 @@ func reload() error {
 			vhosts := db.ReadAllKnownVhosts()
 			lastKnownVhosts := db.ReadLastKnownVhosts()
 			if !reflect.DeepEqual(vhosts, lastKnownVhosts) {
-				logger.Info("Vhost changed detected. Need to reload config")
+				logger.Info("Vhost changes detected. Need to reload config")
 				err = updateAndReloadConfig(&data)
 				if err != nil {
 					logger.WithFields(logrus.Fields{
@@ -227,6 +227,9 @@ func writeConf(data *RenderingData) error {
 		logger.Error("Error in config generated")
 		return err
 	}
+	logger.WithFields(logrus.Fields{
+		"file": config.NginxConfig,
+	}).Info("Writing new config")
 	err = os.Rename(tmpFile.Name(), config.NginxConfig)
 	if err != nil {
 		return err
