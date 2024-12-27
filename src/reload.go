@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"text/template"
 	"time"
@@ -57,13 +58,17 @@ func reload() error {
 		if config.NginxReloadDisabled {
 			logger.Warn("Template reload has been disabled")
 		} else {
-			logger.Info("Need to reload config")
-			err = updateAndReloadConfig(&data)
-			if err != nil {
-				logger.WithFields(logrus.Fields{
-					"error": err.Error(),
-				}).Error("unable to update and reload nginx config. NPlus api calls will be skipped.")
-				return err
+			vhosts := db.ReadAllKnownVhosts()
+			lastKnownVhosts := db.ReadLastKnownVhosts()
+			if !reflect.DeepEqual(vhosts, lastKnownVhosts) {
+				logger.Info("Need to reload config")
+				err = updateAndReloadConfig(&data)
+				if err != nil {
+					logger.WithFields(logrus.Fields{
+						"error": err.Error(),
+					}).Error("unable to update and reload nginx config. NPlus api calls will be skipped.")
+					return err
+				}
 			} else {
 				logger.Debug("No changes detected in vhosts. No config update is necessary. Upstream updates will happen via nplus apis")
 			}
