@@ -441,7 +441,7 @@ func reloadWorker() {
 		for {
 			select {
 			case <-ticker.C:
-				<-upstreamsUpdateSignalQueue
+				<-reloadSignalQueue
 				reload()
 			}
 		}
