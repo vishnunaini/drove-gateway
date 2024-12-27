@@ -562,25 +562,15 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 		return false
 	}
 	equal := syncAppsAndVhosts(droveConfig, &jsonapps, &vhosts)
-	lastConfigUpdated := true
-	namespaceLastUpdated, err := db.ReadLastTimestamp(namespace)
-	if err == nil {
-		if db.ReadLastReloadTimestamp().Before(namespaceLastUpdated) {
-			logger.Info("Last reload still not applied")
-			lastConfigUpdated = false
-		}
-	}
-	//Ideally only lastConfigUpdated can dictate if reload is required
-	if equal && !leaderShifted && lastConfigUpdated {
-		logger.Debug("no config or vhost changes")
+	if equal && !leaderShifted {
+		logger.Debug("no config changes")
 		return false
 	}
 
 	logger.WithFields(logrus.Fields{
-		"namespace":         namespace,
-		"lastConfigUpdated": lastConfigUpdated,
-		"leaderShifted":     leaderShifted,
-		"appsChanged":       !equal,
+		"namespace":     namespace,
+		"leaderShifted": leaderShifted,
+		"appsChanged":   !equal,
 	}).Info("Config or vhosts update required") //logging exact reason of reload
 
 	elapsed := time.Since(start)
