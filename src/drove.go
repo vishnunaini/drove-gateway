@@ -92,12 +92,12 @@ func fetchRecentEvents(httpClient *http.Client, syncPoint *CurrSyncPoint, namesp
 		logger.WithFields(logrus.Fields{
 			"namespace": namespace,
 		}).Error("Error loading drove config")
-		err := errors.New("Error loading Drove Config")
+		err := errors.New("error loading Drove Config")
 		return nil, err
 	}
 
 	var endpoint string
-	for _, es := range health.NamesapceEndpoints[namespace] {
+	for _, es := range health.NamespaceEndpoints[namespace] {
 		if es.Healthy {
 			endpoint = es.Endpoint
 			break
@@ -146,7 +146,7 @@ func fetchRecentEvents(httpClient *http.Client, syncPoint *CurrSyncPoint, namesp
 
 func refreshLeaderData(namespace string) bool {
 	var endpoint string
-	for _, es := range health.NamesapceEndpoints[namespace] {
+	for _, es := range health.NamespaceEndpoints[namespace] {
 		if es.Namespace == namespace && es.Healthy {
 			endpoint = es.Endpoint
 			break
@@ -304,15 +304,15 @@ func setupPollEvents() {
 }
 
 func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
-	for i, es := range health.NamesapceEndpoints[namespace] {
+	for i, es := range health.NamespaceEndpoints[namespace] {
 		req, err := http.NewRequest("GET", es.Endpoint+"/apis/v1/ping", nil)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error":    err.Error(),
 				"endpoint": es.Endpoint,
 			}).Error("an error occurred creating endpoint health request")
-			health.NamesapceEndpoints[namespace][i].Healthy = false
-			health.NamesapceEndpoints[namespace][i].Message = err.Error()
+			health.NamespaceEndpoints[namespace][i].Healthy = false
+			health.NamespaceEndpoints[namespace][i].Message = err.Error()
 			continue
 		}
 		droveConfig, err := db.ReadDroveConfig(es.Namespace)
@@ -321,8 +321,8 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 				"error":    err,
 				"endpoint": es.Endpoint,
 			}).Error("an error occurred reading drove config for health request")
-			health.NamesapceEndpoints[namespace][i].Healthy = false
-			health.NamesapceEndpoints[namespace][i].Message = err.Error()
+			health.NamespaceEndpoints[namespace][i].Healthy = false
+			health.NamespaceEndpoints[namespace][i].Message = err.Error()
 			continue
 		}
 		if droveConfig.User != "" {
@@ -339,18 +339,18 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 				"namespace": namespace,
 			}).Error("endpoint is down")
 			go countEndpointDownErrors.WithLabelValues(namespace).Inc()
-			health.NamesapceEndpoints[namespace][i].Healthy = false
-			health.NamesapceEndpoints[namespace][i].Message = err.Error()
+			health.NamespaceEndpoints[namespace][i].Healthy = false
+			health.NamespaceEndpoints[namespace][i].Message = err.Error()
 			continue
 		}
 		resp.Body.Close()
 		if resp.StatusCode != 200 {
-			health.NamesapceEndpoints[namespace][i].Healthy = false
-			health.NamesapceEndpoints[namespace][i].Message = resp.Status
+			health.NamespaceEndpoints[namespace][i].Healthy = false
+			health.NamespaceEndpoints[namespace][i].Message = resp.Status
 			continue
 		}
-		health.NamesapceEndpoints[namespace][i].Healthy = true
-		health.NamesapceEndpoints[namespace][i].Message = "OK"
+		health.NamespaceEndpoints[namespace][i].Healthy = true
+		health.NamespaceEndpoints[namespace][i].Message = "OK"
 		logger.WithFields(logrus.Fields{
 			"host":      es.Endpoint,
 			"namespace": namespace,
@@ -385,7 +385,7 @@ func setupEndpointHealth() {
 
 func fetchApps(httpClient *http.Client, droveConfig DroveConfig, jsonapps *DroveApps) error {
 	var endpoint string
-	for _, es := range health.NamesapceEndpoints[droveConfig.Name] {
+	for _, es := range health.NamespaceEndpoints[droveConfig.Name] {
 		if es.Healthy {
 			endpoint = es.Endpoint
 			break

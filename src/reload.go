@@ -53,13 +53,13 @@ func reload() error {
 		upstreamUpdateAPI = false
 	}
 
-	if upstreamUpdateAPI == false {
+	if !upstreamUpdateAPI {
 		//Any use of runtime API is disabled
 		err = updateAndReloadConfig(&data, false)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
-			}).Error("unable to reload %s config", config.ProxyPlatform)
+			}).Error("unable to reload " + config.ProxyPlatform + " config")
 			go statsCount("reload.failed", 1)
 			go countFailedReloads.Inc()
 			return err
@@ -79,11 +79,11 @@ func reload() error {
 				if err != nil {
 					logger.WithFields(logrus.Fields{
 						"error": err.Error(),
-					}).Error("unable to update and reload %s config. Runtime api calls to update upstreams will be skipped.", config.ProxyPlatform)
+					}).Error("unable to update and reload " + config.ProxyPlatform + " config. Runtime api calls to update upstreams will be skipped.")
 					return err
 				}
 			} else {
-				logger.Debug("No changes detected in vhosts. No config update is necessary. Upstream updates will happen via %s apis", config.ProxyPlatform)
+				logger.Debug("No changes detected in vhosts. No config update is necessary. Upstream updates will happen via " + config.ProxyPlatform + " apis")
 			}
 		}
 

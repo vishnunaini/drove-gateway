@@ -131,7 +131,7 @@ type EndpointStatus struct {
 type Health struct {
 	Config             Status
 	Template           Status
-	NamesapceEndpoints map[string][]EndpointStatus
+	NamespaceEndpoints map[string][]EndpointStatus
 }
 
 // Global variables
@@ -195,7 +195,7 @@ var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{I
 
 func newHealth() Health {
 	var h Health
-	h.NamesapceEndpoints = make(map[string][]EndpointStatus)
+	h.NamespaceEndpoints = make(map[string][]EndpointStatus)
 	for _, nsConfig := range config.DroveNamespaces {
 		e := []EndpointStatus{}
 		for _, ep := range nsConfig.Drove {
@@ -206,7 +206,7 @@ func newHealth() Health {
 			s.Message = "OK"
 			e = append(e, s)
 		}
-		h.NamesapceEndpoints[nsConfig.Name] = e
+		h.NamespaceEndpoints[nsConfig.Name] = e
 	}
 	return h
 }
@@ -257,20 +257,20 @@ func setupDefaultConfig() {
 func validateConfig() error {
 	for _, nsConfig := range config.DroveNamespaces {
 		if nsConfig.Name == "" {
-			return errors.New("Drove namespace name is mandatory")
+			return errors.New("drove namespace name is mandatory")
 		}
 	}
 
 	if config.ProxyPlatform == "haproxy" {
 		if (config.HaproxyReloadDisabled) && (config.HaproxySocketAddr == "") {
-			return errors.New("HAProxy socket adress is mandatory when reloads are disabled. Can't update runtime servers.")
+			return errors.New("haproxy socket adress is mandatory when reloads are disabled, can't update runtime servers")
 		}
 
 	}
 
 	if config.ProxyPlatform == "nginx" {
 		if (config.NginxReloadDisabled) && (config.Nginxplusapiaddr == "") {
-			return errors.New("nginx-plus API adress is mandatory when reloads are disabled. Can't update upstreams.")
+			return errors.New("nginx-plus api adress is mandatory when reloads are disabled. can't update upstreams")
 		}
 	}
 
@@ -324,7 +324,7 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	anyNamesapceDown := false
-	for _, nsEnpoint := range health.NamesapceEndpoints {
+	for _, nsEnpoint := range health.NamespaceEndpoints {
 		allBackendsDownForGivenNS := true
 		for _, endpoint := range nsEnpoint {
 			if endpoint.Healthy {
