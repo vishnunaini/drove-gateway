@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -73,13 +72,21 @@ type Config struct {
 	TLScertFile             string           `json:"-" toml:"port_tls_certfile"`
 	TLSkeyFile              string           `json:"-" toml:"port_tls_keyfile"`
 	DroveNamespaces         []DroveNamespace `json:"-" toml:"namespaces"`
-	EventRefreshIntervalSec int              `json:"-"  toml:"event_refresh_interval_sec"`
-	Nginxplusapiaddr        string           `json:"-"`
+	EventRefreshIntervalSec int              `json:"-" toml:"event_refresh_interval_sec"`
+	ProxyPlatform           string           `json:"_" toml:"proxy_platform"`
+	Nginxplusapiaddr        string           `json:"-" toml:"nginxplusapiaddr"`
 	NginxReloadDisabled     bool             `json:"-" toml:"nginx_reload_disabled"`
 	NginxConfig             string           `json:"-" toml:"nginx_config"`
 	NginxTemplate           string           `json:"-" toml:"nginx_template"`
 	NginxCmd                string           `json:"-" toml:"nginx_cmd"`
 	NginxIgnoreCheck        bool             `json:"-" toml:"nginx_ignore_check"`
+	HaproxySocketAddr       string           `json:"-" toml:"haproxysocketaddr"`
+	HaproxyReloadDisabled   bool             `json:"_" toml:"haproxy_reload_disabled"`
+	HaproxyConfig           string           `json:"-" toml:"haproxy_config"`
+	HaproxyTemplate         string           `json:"-" toml:"haproxy_template"`
+	HaproxyReloadCmd        string           `json:"-" toml:"haproxy_reload_cmd"`
+	HaproxyCmd              string           `json:"-" toml:"haproxy_cmd"`
+	HaproxyIgnoreCheck      bool             `json:"-" toml:"haproxy_ignore_check"`
 	LeftDelimiter           string           `json:"-" toml:"left_delimiter"`
 	RightDelimiter          string           `json:"-" toml:"right_delimiter"`
 	MaxFailsUpstream        *int             `json:"max_fails,omitempty"`
@@ -93,10 +100,10 @@ type Config struct {
 
 // Updates timings used for metrics
 type Updates struct {
-	LastSync           time.Time
-	LastConfigRendered time.Time
-	LastConfigValid    time.Time
-	LastNginxReload    time.Time
+	LastSync               time.Time
+	LastConfigRendered     time.Time
+	LastConfigValid        time.Time
+	LastProxyProgramReload time.Time
 }
 
 // StatsdConfig statsd stuct
@@ -137,6 +144,15 @@ var health Health
 var lastConfig string
 var db DataManager
 var logger = logrus.New()
+
+var ConfigPath string
+var TemplatePath string
+var ReloadCmd string
+var IgnoreCheck bool
+var ProgramCmd string
+var ConfigReloadDisabled bool
+var ProgramCmdConfFileArg string
+var ProgramCmdConfTestArg string
 
 // set log level
 func setloglevel() {
@@ -210,6 +226,32 @@ func setupDefaultConfig() {
 	if config.apiTimeout <= 0 {
 		config.apiTimeout = 10
 	}
+
+	//default proxyplatform as nginx
+	if config.ProxyPlatform == "" {
+		config.ProxyPlatform = "nginx"
+	}
+
+	//set proxy platform parameters
+	if config.ProxyPlatform == "nginx" {
+		ConfigPath = config.NginxConfig
+		TemplatePath = config.NginxTemplate
+		ReloadCmd = config.NginxCmd
+		ProgramCmd = config.NginxCmd
+		IgnoreCheck = config.NginxIgnoreCheck
+		ConfigReloadDisabled = config.NginxReloadDisabled
+		ProgramCmdConfFileArg = "-c"
+		ProgramCmdConfTestArg = "-t"
+	} else if config.ProxyPlatform == "haproxy" {
+		ConfigPath = config.HaproxyConfig
+		TemplatePath = config.HaproxyTemplate
+		ReloadCmd = config.HaproxyReloadCmd
+		ProgramCmd = config.HaproxyCmd
+		IgnoreCheck = config.HaproxyIgnoreCheck
+		ConfigReloadDisabled = config.HaproxyReloadDisabled
+		ProgramCmdConfFileArg = "-f"
+		ProgramCmdConfTestArg = "-c"
+	}
 }
 
 func validateConfig() error {
@@ -218,6 +260,20 @@ func validateConfig() error {
 			return errors.New("Drove namespace name is mandatory")
 		}
 	}
+
+	if config.ProxyPlatform == "haproxy" {
+		if (config.HaproxyReloadDisabled) && (config.HaproxySocketAddr == "") {
+			return errors.New("HAProxy socket adress is mandatory when reloads are disabled. Can't update runtime servers.")
+		}
+
+	}
+
+	if config.ProxyPlatform == "nginx" {
+		if (config.NginxReloadDisabled) && (config.Nginxplusapiaddr == "") {
+			return errors.New("nginx-plus API adress is mandatory when reloads are disabled. Can't update upstreams.")
+		}
+	}
+
 	return nil
 }
 
@@ -242,7 +298,7 @@ func nixyReload(w http.ResponseWriter, r *http.Request) {
 }
 
 func nixyHealth(w http.ResponseWriter, r *http.Request) {
-	if config.NginxReloadDisabled {
+	if ConfigReloadDisabled {
 		health.Template.Message = "Templating disabled"
 		health.Template.Healthy = true
 		health.Config.Message = "Config templating disabled"
@@ -312,7 +368,7 @@ func main() {
 		fmt.Printf("date: %s\n", date)
 		os.Exit(0)
 	}
-	file, err := ioutil.ReadFile(*configtoml)
+	file, err := os.ReadFile(*configtoml)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),

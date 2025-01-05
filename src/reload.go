@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -42,38 +42,59 @@ func reload() error {
 	data := RenderingData{}
 	createRenderingData(&data)
 	config.LastUpdates.LastSync = time.Now()
-	if len(config.Nginxplusapiaddr) == 0 || config.Nginxplusapiaddr == "" {
-		//Nginx plus is disabled
-		err = updateAndReloadConfig(&data)
+
+	var upstreamUpdateAPI bool
+
+	if (config.ProxyPlatform == "nginx") && (len(config.Nginxplusapiaddr) == 0 || config.Nginxplusapiaddr == "") {
+		//Nginx plus http_api is disabled
+		upstreamUpdateAPI = false
+	} else if (config.ProxyPlatform == "haproxy") && (len(config.HaproxySocketAddr) == 0 || config.HaproxySocketAddr == "") {
+		//HAProxy Runtime API is disabled
+		upstreamUpdateAPI = false
+	}
+
+	if upstreamUpdateAPI == false {
+		//Any use of runtime API is disabled
+		err = updateAndReloadConfig(&data, false)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
-			}).Error("unable to reload nginx config")
+			}).Error("unable to reload %s config", config.ProxyPlatform)
 			go statsCount("reload.failed", 1)
 			go countFailedReloads.Inc()
 			return err
 		}
 	} else {
-		//Nginx plus is enabled
-		if config.NginxReloadDisabled {
-			logger.Debug("Template reload has been disabled")
+		//Use of runtime API is enabled
+		//For HAProxy, config is generated but not loaded even when reload is disabled as there is not other way to persist state across reloads
+		//For Nginx+, ngx http_api maintains it's own state files if referenced in the running nginx config. Hence no templating is done at all when reload is disabled
+		if (ConfigReloadDisabled) && config.ProxyPlatform == "nginx" {
+			logger.Debug("Nginx: Template reload has been disabled")
 		} else {
 			vhosts := db.ReadAllKnownVhosts()
 			lastKnownVhosts := db.ReadLastKnownVhosts()
 			if !reflect.DeepEqual(vhosts, lastKnownVhosts) {
 				logger.Info("Vhost changes detected. Need to reload config")
-				err = updateAndReloadConfig(&data)
+				err = updateAndReloadConfig(&data, false)
 				if err != nil {
 					logger.WithFields(logrus.Fields{
 						"error": err.Error(),
-					}).Error("unable to update and reload nginx config. NPlus api calls will be skipped.")
+					}).Error("unable to update and reload %s config. Runtime api calls to update upstreams will be skipped.", config.ProxyPlatform)
 					return err
 				}
 			} else {
-				logger.Debug("No changes detected in vhosts. No config update is necessary. Upstream updates will happen via nplus apis")
+				logger.Debug("No changes detected in vhosts. No config update is necessary. Upstream updates will happen via %s apis", config.ProxyPlatform)
 			}
 		}
-		err = nginxPlus(&data)
+
+		if config.ProxyPlatform == "nginx" {
+			err = nginxPlus(&data)
+		} else if config.ProxyPlatform == "haproxy" {
+			//For HAProxy, config is generated but not loaded even when reload is disabled as there is not other way to persist state across reloads
+			updateAndReloadConfig(&data, true)
+			// err = haproxyRuntimeAPI(&data)
+		}
+
 	}
 	if err != nil {
 		logger.WithFields(logrus.Fields{
@@ -91,7 +112,7 @@ func reload() error {
 
 }
 
-func updateAndReloadConfig(data *RenderingData) error {
+func updateAndReloadConfig(data *RenderingData, reloadDisable bool) error {
 	start := time.Now()
 	config.LastUpdates.LastSync = time.Now()
 	vhosts := db.ReadAllKnownVhosts()
@@ -105,24 +126,32 @@ func updateAndReloadConfig(data *RenderingData) error {
 		return err
 	}
 	config.LastUpdates.LastConfigValid = time.Now()
-	err = reloadNginx()
-	if err != nil {
-		logger.WithFields(logrus.Fields{
-			"error": err.Error(),
-		}).Error("unable to reload nginx")
-		go statsCount("reload.failed", 1)
-		go countFailedReloads.Inc()
-	} else {
-		elapsed := time.Since(start)
-		logger.WithFields(logrus.Fields{
-			"took": elapsed,
-		}).Debug("config updated and reloaded successfully")
-		go statsCount("reload.success", 1)
-		go statsTiming("reload.time", elapsed)
-		go countSuccessfulReloads.Inc()
-		go observeReloadTimeMetric(elapsed)
-		config.LastUpdates.LastNginxReload = time.Now()
-		db.UpdateLastKnownVhosts(vhosts)
+
+	if !reloadDisable {
+		if config.ProxyPlatform == "nginx" {
+			err = reloadNginx()
+		} else if config.ProxyPlatform == "haproxy" {
+			err = reloadHaproxy()
+		}
+
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"error": err.Error(),
+			}).Error("unable to reload nginx")
+			go statsCount("reload.failed", 1)
+			go countFailedReloads.Inc()
+		} else {
+			elapsed := time.Since(start)
+			logger.WithFields(logrus.Fields{
+				"took": elapsed,
+			}).Debug("config updated and reloaded successfully")
+			go statsCount("reload.success", 1)
+			go statsTiming("reload.time", elapsed)
+			go countSuccessfulReloads.Inc()
+			go observeReloadTimeMetric(elapsed)
+			config.LastUpdates.LastProxyProgramReload = time.Now()
+			db.UpdateLastKnownVhosts(vhosts)
+		}
 	}
 	return nil
 }
@@ -205,13 +234,13 @@ func writeConf(data *RenderingData) error {
 	config.RLock()
 	defer config.RUnlock()
 
-	template, err := getTmpl()
+	template, err := getTmpl(TemplatePath)
 	if err != nil {
 		return err
 	}
 
-	parent := filepath.Dir(config.NginxConfig)
-	tmpFile, err := ioutil.TempFile(parent, ".nginx.conf.tmp-")
+	parent := filepath.Dir(ConfigPath)
+	tmpFile, err := os.CreateTemp(parent, "."+config.ProxyPlatform+".conf.tmp-")
 	if err != nil {
 		return err
 	}
@@ -228,13 +257,13 @@ func writeConf(data *RenderingData) error {
 		return err
 	}
 	logger.WithFields(logrus.Fields{
-		"file": config.NginxConfig,
+		"file": ConfigPath,
 	}).Info("Writing new config")
-	err = os.Rename(tmpFile.Name(), config.NginxConfig)
+	err = os.Rename(tmpFile.Name(), ConfigPath)
 	if err != nil {
 		return err
 	}
-	lastConfig = config.NginxConfig
+	lastConfig = ConfigPath
 	return nil
 }
 
@@ -367,22 +396,22 @@ func nginxPlus(data *RenderingData) error {
 func checkTmpl() error {
 	config.RLock()
 	defer config.RUnlock()
-	t, err := getTmpl()
+	t, err := getTmpl(TemplatePath)
 	if err != nil {
 		return err
 	}
-	err = t.Execute(ioutil.Discard, &config)
+	err = t.Execute(io.Discard, &config)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func getTmpl() (*template.Template, error) {
+func getTmpl(proxyTemplatePath string) (*template.Template, error) {
 	logger.WithFields(logrus.Fields{
-		"file": config.NginxTemplate,
+		"file": proxyTemplatePath,
 	}).Info("Reading template")
-	return template.New(filepath.Base(config.NginxTemplate)).
+	return template.New(filepath.Base(proxyTemplatePath)).
 		Delims(config.LeftDelimiter, config.RightDelimiter).
 		Funcs(template.FuncMap{
 			"hasPrefix": strings.HasPrefix,
@@ -395,23 +424,23 @@ func getTmpl() (*template.Template, error) {
 			"tolower":   strings.ToLower,
 			"getenv":    os.Getenv,
 			"datetime":  time.Now}).
-		ParseFiles(config.NginxTemplate)
+		ParseFiles(proxyTemplatePath)
 }
 
 func checkConf(path string) error {
 	// Always return OK if disabled in config.
-	if config.NginxIgnoreCheck {
+	if IgnoreCheck {
 		return nil
 	}
 	// This is to allow arguments as well. Example "docker exec nginx..."
-	args := strings.Fields(config.NginxCmd)
+	args := strings.Fields(ProgramCmd)
 	head := args[0]
 	args = args[1:]
-	args = append(args, "-c")
+	args = append(args, ProgramCmdConfFileArg)
 	args = append(args, path)
-	args = append(args, "-t")
+	args = append(args, ProgramCmdConfTestArg)
 	cmd := exec.Command(head, args...)
-	//cmd := exec.Command(parts..., "-c", path, "-t")
+	//e.g for nginx cmd := exec.Command(parts..., "-c", path, "-t")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run() // will wait for command to return
@@ -430,6 +459,23 @@ func reloadNginx() error {
 	args = args[1:]
 	args = append(args, "-s")
 	args = append(args, "reload")
+	cmd := exec.Command(head, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run() // will wait for command to return
+	if err != nil {
+		msg := fmt.Sprint(err) + ": " + stderr.String()
+		errstd := errors.New(msg)
+		return errstd
+	}
+	return nil
+}
+
+func reloadHaproxy() error {
+	// This is to allow other cmds as well. Example "docker exec haproxy..." or SIGUSR2 to master worker
+	args := strings.Fields(config.HaproxyReloadCmd)
+	head := args[0]
+	args = args[1:]
 	cmd := exec.Command(head, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
