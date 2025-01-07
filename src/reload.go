@@ -371,7 +371,9 @@ func checkTmpl() error {
 	if err != nil {
 		return err
 	}
-	err = t.Execute(ioutil.Discard, &config)
+	data := RenderingData{}
+        createRenderingData(&data)
+	err = t.Execute(ioutil.Discard, &data)
 	if err != nil {
 		return err
 	}
