@@ -18,7 +18,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/crypto v0.21.0
 	golang.org/x/sys v0.18.0
-        github.com/nginxinc/nginx-plus-go-client v1.3.0
+	github.com/nginxinc/nginx-plus-go-client v1.3.0
 )
 
 require (

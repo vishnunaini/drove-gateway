@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/avast/retry-go"
 	"github.com/gorilla/mux"
 	"github.com/peterbourgon/g2s"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -51,43 +51,44 @@ type Vhosts struct {
 	Vhosts map[string]bool
 }
 
+type DroveNamespace struct {
+	Name        string   `json:"-" toml:"name"`
+	Drove       []string `json:"-"`
+	User        string   `json:"-"`
+	Pass        string   `json:"-"`
+	AccessToken string   `json:"-" toml:"access_token"`
+	Realm       string
+	RealmSuffix string `json:"-" toml:"realm_suffix"`
+	RoutingTag  string `json:"-" toml:"routing_tag"`
+	LeaderVHost string `json:"-" toml:"leader_vhost"`
+}
+
 // Config struct used by the template engine
 type Config struct {
 	sync.RWMutex
 	Xproxy                  string
-	Realm                   string
-	RealmSuffix             string   `json:"-" toml:"realm_suffix"`
-	Address                 string   `json:"-"`
-	Port                    string   `json:"-"`
-	PortWithTLS             bool     `json:"-" toml:"port_use_tls"`
-	TLScertFile             string   `json:"-" toml:"port_tls_certfile"`
-	TLSkeyFile              string   `json:"-" toml:"port_tls_keyfile"`
-	Drove                   []string `json:"-"`
-	EventRefreshIntervalSec int      `json:"-"  toml:"event_refresh_interval_sec"`
-	User                    string   `json:"-"`
-	Pass                    string   `json:"-"`
-	AccessToken             string   `json:"-" toml:"access_token"`
-	Nginxplusapiaddr        string   `json:"-"`
-	NginxReloadDisabled     bool     `json:"-" toml:"nginx_reload_disabled"`
-	NginxConfig             string   `json:"-" toml:"nginx_config"`
-	NginxTemplate           string   `json:"-" toml:"nginx_template"`
-	NginxCmd                string   `json:"-" toml:"nginx_cmd"`
-	NginxIgnoreCheck        bool     `json:"-" toml:"nginx_ignore_check"`
-	LeftDelimiter           string   `json:"-" toml:"left_delimiter"`
-	RightDelimiter          string   `json:"-" toml:"right_delimiter"`
-	MaxFailsUpstream        *int     `json:"max_fails,omitempty"`
-	FailTimeoutUpstream     string   `json:"fail_timeout,omitempty"`
-	SlowStartUpstream       string   `json:"slow_start,omitempty"`
-	LogLevel                string   `json:"-" toml:"loglevel"`
-
-	apiTimeout  int    `json:"-" toml:"api_timeout"`
-	LeaderVHost string `json:"-" toml:"leader_vhost"`
-	RoutingTag  string `json:"-" toml:"routing_tag"`
-	Leader      LeaderController
-	Statsd      StatsdConfig
-	LastUpdates Updates
-	Apps        map[string]App
-	KnownVHosts Vhosts
+	Address                 string           `json:"-"`
+	Port                    string           `json:"-"`
+	PortWithTLS             bool             `json:"-" toml:"port_use_tls"`
+	TLScertFile             string           `json:"-" toml:"port_tls_certfile"`
+	TLSkeyFile              string           `json:"-" toml:"port_tls_keyfile"`
+	DroveNamespaces         []DroveNamespace `json:"-" toml:"namespaces"`
+	EventRefreshIntervalSec int              `json:"-"  toml:"event_refresh_interval_sec"`
+	Nginxplusapiaddr        string           `json:"-"`
+	NginxReloadDisabled     bool             `json:"-" toml:"nginx_reload_disabled"`
+	NginxConfig             string           `json:"-" toml:"nginx_config"`
+	NginxTemplate           string           `json:"-" toml:"nginx_template"`
+	NginxCmd                string           `json:"-" toml:"nginx_cmd"`
+	NginxIgnoreCheck        bool             `json:"-" toml:"nginx_ignore_check"`
+	LeftDelimiter           string           `json:"-" toml:"left_delimiter"`
+	RightDelimiter          string           `json:"-" toml:"right_delimiter"`
+	MaxFailsUpstream        *int             `json:"max_fails,omitempty"`
+	FailTimeoutUpstream     string           `json:"fail_timeout,omitempty"`
+	SlowStartUpstream       string           `json:"slow_start,omitempty"`
+	LogLevel                string           `json:"-" toml:"loglevel"`
+	apiTimeout              int              `json:"-" toml:"api_timeout"`
+	Statsd                  StatsdConfig
+	LastUpdates             Updates
 }
 
 // Updates timings used for metrics
@@ -113,16 +114,17 @@ type Status struct {
 
 // EndpointStatus health status struct
 type EndpointStatus struct {
-	Endpoint string
-	Healthy  bool
-	Message  string
+	Namespace string
+	Endpoint  string
+	Healthy   bool
+	Message   string
 }
 
 // Health struct
 type Health struct {
-	Config    Status
-	Template  Status
-	Endpoints []EndpointStatus
+	Config             Status
+	Template           Status
+	NamesapceEndpoints map[string][]EndpointStatus
 }
 
 // Global variables
@@ -133,9 +135,10 @@ var config = Config{LeftDelimiter: "{{", RightDelimiter: "}}"}
 var statsd g2s.Statter
 var health Health
 var lastConfig string
+var db DataManager
 var logger = logrus.New()
 
-//set log level
+// set log level
 func setloglevel() {
 	logLevel := logrus.InfoLevel
 	switch config.LogLevel {
@@ -150,45 +153,92 @@ func setloglevel() {
 	case "error":
 		logLevel = logrus.ErrorLevel
 	default:
-		logger.Error("unknown loglevel")
+		logger.Error("unknown loglevel. Defaulting to info")
 		logLevel = logrus.InfoLevel
 	}
 
 	logger.SetLevel(logLevel)
 }
 
-// Eventqueue with buffer of two, because we dont really need more.
-var eventqueue = make(chan bool, 2)
+// set DataManager
+func setupDataManager() {
+	db = *NewDataManager(config.Xproxy, config.LeftDelimiter, config.RightDelimiter, config.MaxFailsUpstream,
+		config.FailTimeoutUpstream, config.SlowStartUpstream)
+	for _, nsConfig := range config.DroveNamespaces {
+		db.CreateNamespace(nsConfig.Name, nsConfig.Drove, nsConfig.User, nsConfig.Pass,
+			nsConfig.AccessToken, nsConfig.Realm, nsConfig.RealmSuffix, nsConfig.RoutingTag, nsConfig.LeaderVHost)
+	}
+}
+
+// Reload signal with buffer of two, because we dont really need more.
+var appsConfigUpdateSignalQueue = make(chan bool, 2)
+var eventRefreshSignalQueue = make(chan bool, 2)
 
 // Global http transport for connection reuse
 var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 
 func newHealth() Health {
 	var h Health
-	for _, ep := range config.Drove {
-		var s EndpointStatus
-		s.Endpoint = ep
-		s.Healthy = false
-		s.Message = "OK"
-		h.Endpoints = append(h.Endpoints, s)
+	h.NamesapceEndpoints = make(map[string][]EndpointStatus)
+	for _, nsConfig := range config.DroveNamespaces {
+		e := []EndpointStatus{}
+		for _, ep := range nsConfig.Drove {
+			var s EndpointStatus
+			s.Endpoint = ep
+			s.Namespace = nsConfig.Name
+			s.Healthy = false
+			s.Message = "OK"
+			e = append(e, s)
+		}
+		h.NamesapceEndpoints[nsConfig.Name] = e
 	}
 	return h
+}
+
+func setupDefaultConfig() {
+	// Lets default empty Xproxy to hostname.
+	if config.Xproxy == "" {
+		config.Xproxy, _ = os.Hostname()
+	}
+
+	//default refresh interval
+	if config.EventRefreshIntervalSec <= 0 {
+		config.EventRefreshIntervalSec = 2
+	}
+
+	//default apiTimeout
+	if config.apiTimeout <= 0 {
+		config.apiTimeout = 10
+	}
+}
+
+func validateConfig() error {
+	for _, nsConfig := range config.DroveNamespaces {
+		if nsConfig.Name == "" {
+			return errors.New("Drove namespace name is mandatory")
+		}
+	}
+	return nil
 }
 
 func nixyReload(w http.ResponseWriter, r *http.Request) {
 	logger.WithFields(logrus.Fields{
 		"client": r.RemoteAddr,
-	}).Info("drove reload triggered")
+	}).Info("Reload triggered via /v1/reload")
+	queued := true
 	select {
-	case eventqueue <- true: // Add reload to our queue channel, unless it is full of course.
+	case eventRefreshSignalQueue <- true: // Add referesh to our signal channel, unless it is full of course.
+	default:
+		queued = false
+	}
+	if queued {
 		w.WriteHeader(202)
 		fmt.Fprintln(w, "queued")
 		return
-	default:
-		w.WriteHeader(202)
-		fmt.Fprintln(w, "queue is full")
-		return
 	}
+	w.WriteHeader(202)
+	fmt.Fprintln(w, "queue is full")
+	return
 }
 
 func nixyHealth(w http.ResponseWriter, r *http.Request) {
@@ -217,16 +267,21 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 			health.Config.Healthy = true
 		}
 	}
-	allBackendsDown := true
-	for _, endpoint := range health.Endpoints {
-		if endpoint.Healthy {
-			allBackendsDown = false
-			break
+	anyNamesapceDown := false
+	for _, nsEnpoint := range health.NamesapceEndpoints {
+		allBackendsDownForGivenNS := true
+		for _, endpoint := range nsEnpoint {
+			if endpoint.Healthy {
+				allBackendsDownForGivenNS = false
+				break
+			}
 		}
+		anyNamesapceDown = anyNamesapceDown || allBackendsDownForGivenNS
 	}
-	if allBackendsDown {
+	if anyNamesapceDown {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
+
 	w.Header().Add("Content-Type", "application/json; charset=utf-8")
 	b, _ := json.MarshalIndent(health, "", "  ")
 	w.Write(b)
@@ -235,7 +290,7 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 
 func nixyConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "application/json; charset=utf-8")
-	b, _ := json.MarshalIndent(&config, "", "  ")
+	b, _ := json.MarshalIndent(&db, "", "  ")
 	w.Write(b)
 	return
 }
@@ -269,11 +324,14 @@ func main() {
 			"error": err.Error(),
 		}).Fatal("problem parsing config")
 	}
-	// Lets default empty Xproxy to hostname.
-	if config.Xproxy == "" {
-		config.Xproxy, _ = os.Hostname()
-	}
 	setloglevel()
+	err = validateConfig()
+	if err != nil {
+		logger.WithFields(logrus.Fields{
+			"error": err.Error(),
+		}).Fatal("problem in config")
+	}
+
 	statsd, err = setupStatsd()
 	if err != nil {
 		logger.WithFields(logrus.Fields{
@@ -281,7 +339,9 @@ func main() {
 		}).Error("unable to Dial statsd")
 		statsd = g2s.Noop() //fallback to Noop.
 	}
+	setupDefaultConfig()
 	setupPrometheusMetrics()
+	setupDataManager()
 	mux := mux.NewRouter()
 	mux.HandleFunc("/", nixyVersion)
 	mux.HandleFunc("/v1/reload", nixyReload)
@@ -312,10 +372,10 @@ func main() {
 		}
 	}
 	health = newHealth()
-	endpointHealth()
-	err = retry.Do(reload)
-	eventWorker()
-	pollEvents()
+	setupEndpointHealth()
+	setupPollEvents()
+	reloadWorker() //Reloader
+	// forceReload()
 	logger.Info("Address:" + config.Address)
 	if config.PortWithTLS {
 		logger.Info("starting nixy on https://" + config.Address + ":" + config.Port)

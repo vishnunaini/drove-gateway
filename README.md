@@ -30,6 +30,8 @@ The following environment variables can be used to tune the behaviour of the con
 | NGINX_DROVE_VHOST | **Optional** The vhost for drove endpoint to be configured. | If this is set, drove-gateway  will expose the leader controller over the provided vhost.                                                |
 | DROVE_USERNAME    |           **Optional.** Set to `guest` by default.          | Username to login to drove. Read-only user is sufficient.                                                                      |
 | DROVE_PASSWORD    |           **Optional.** Set to `guest` by default.          | Password to drove cluster for the above username.|
+| DROVE_CLUSTER_NAME    |           **Optional.** Set to `default` by default.          | Name of drove cluster.|
+
 
 You can run the container using following command for example:
 
@@ -39,6 +41,7 @@ docker run --name dgw --rm \
     -e TZ=Asia/Calcutta \
     -e DROVE_USERNAME=guest \
     -e DROVE_PASSWORD=guest \
+    -e DROVE_CLUSTER_NAME=stage \
     -e NGINX_DROVE_VHOST=drove.local \
     --network host \
     ghcr.io/phonepe/drove-gateway
