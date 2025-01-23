@@ -505,7 +505,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 				logger.WithFields(logrus.Fields{
 					"realm": droveConfig.Realm,
 					"vhost": app.Vhost,
-				}).Warn("Host ignored due to realm mismatch")
+				}).Debug("Host ignored due to realm mismatch")
 			}
 		}
 	}

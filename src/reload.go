@@ -18,6 +18,8 @@ import (
 
 	nplus "github.com/nginxinc/nginx-plus-go-client/client"
 	"github.com/sirupsen/logrus"
+
+	haproxy_runtime_options "github.com/haproxytech/client-native/v6/runtime/options"
 )
 
 type NamespaceRenderingData struct {
@@ -43,17 +45,17 @@ func reload() error {
 	createRenderingData(&data)
 	config.LastUpdates.LastSync = time.Now()
 
-	var upstreamUpdateAPI bool
+	var upstreamUpdateAPIEnabled bool
 
 	if (config.ProxyPlatform == "nginx") && (len(config.Nginxplusapiaddr) == 0 || config.Nginxplusapiaddr == "") {
 		//Nginx plus http_api is disabled
-		upstreamUpdateAPI = false
+		upstreamUpdateAPIEnabled = false
 	} else if (config.ProxyPlatform == "haproxy") && (len(config.HaproxySocketAddr) == 0 || config.HaproxySocketAddr == "") {
 		//HAProxy Runtime API is disabled
-		upstreamUpdateAPI = false
+		upstreamUpdateAPIEnabled = false
 	}
 
-	if !upstreamUpdateAPI {
+	if !upstreamUpdateAPIEnabled {
 		//Any use of runtime API is disabled
 		err = updateAndReloadConfig(&data, false)
 		if err != nil {
@@ -91,7 +93,7 @@ func reload() error {
 			err = nginxPlus(&data)
 		} else if config.ProxyPlatform == "haproxy" {
 			//For HAProxy, config is generated but not loaded even when reload is disabled as there is not other way to persist state across reloads
-			updateAndReloadConfig(&data, true)
+			updateWithoutReloadConfig(&data)
 			// err = haproxyRuntimeAPI(&data)
 		}
 
@@ -112,7 +114,22 @@ func reload() error {
 
 }
 
-func updateAndReloadConfig(data *RenderingData, reloadDisable bool) error {
+func updateWithoutReloadConfig(data *RenderingData) error {
+	config.LastUpdates.LastSync = time.Now()
+	err := writeConf(data)
+	if err != nil {
+		logger.WithFields(logrus.Fields{
+			"error": err.Error(),
+		}).Error("unable to generate nginx config")
+		go statsCount("reload.failed", 1)
+		go countFailedReloads.Inc()
+		return err
+	}
+	config.LastUpdates.LastConfigValid = time.Now()
+	return nil
+}
+
+func updateAndReloadConfig(data *RenderingData, reloadDisabled bool) error {
 	start := time.Now()
 	config.LastUpdates.LastSync = time.Now()
 	vhosts := db.ReadAllKnownVhosts()
@@ -127,7 +144,7 @@ func updateAndReloadConfig(data *RenderingData, reloadDisable bool) error {
 	}
 	config.LastUpdates.LastConfigValid = time.Now()
 
-	if !reloadDisable {
+	if !reloadDisabled {
 		if config.ProxyPlatform == "nginx" {
 			err = reloadNginx()
 		} else if config.ProxyPlatform == "haproxy" {
@@ -264,6 +281,29 @@ func writeConf(data *RenderingData) error {
 		return err
 	}
 	lastConfig = ConfigPath
+	return nil
+}
+
+func haproxyRuntimeAPI(data *RenderingData) error {
+	//Current implementation only updates AppVhosts, does not suppport routing tag & LeaderVhost
+	config.RLock()
+	defer config.RUnlock()
+
+	logger.WithFields(logrus.Fields{
+		"haproxy": config.HaproxySocketAddr,
+	}).Debug("haproxy socket address")
+
+	ms := haproxy_runtime_options.MasterSocket(config.HaproxySocketAddr)
+	client, err := haproxy_runtime.initWithMasterSocket.New(ms)
+
+	if err != nil {
+		return fmt.Errorf("error setting up runtime client: %s", err.Error())
+	}
+	env, err := client.ExecuteRaw("show env")
+	if err != nil {
+		logger.Println(err)
+	}
+	logger.Println(env)
 	return nil
 }
 
