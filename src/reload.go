@@ -436,13 +436,15 @@ func nginxPlus(data *RenderingData) error {
 func checkTmpl() error {
 	config.RLock()
 	defer config.RUnlock()
+	data := RenderingData{}
+	createRenderingData(&data)
 	t, err := getTmpl(TemplatePath)
 	if err != nil {
 		return err
 	}
 	data := RenderingData{}
 	createRenderingData(&data)
-	err = t.Execute(io.Discard, &data)
+	err = t.Execute(io.Discard, &config)
 	if err != nil {
 		return err
 	}
