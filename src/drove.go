@@ -216,6 +216,7 @@ func pollingHandler(droveClient *DroveClient, appsConfigUpdateChannel chan<- boo
 
 	leaderShifted := refreshLeaderData(namespace)
 	eventSummary, err := fetchRecentEvents(droveClient.httpClient, &droveClient.syncPoint, namespace)
+	appsConfigUpdateNeeded := false
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error":     err.Error(),
@@ -228,28 +229,29 @@ func pollingHandler(droveClient *DroveClient, appsConfigUpdateChannel chan<- boo
 				"namespace": namespace,
 				"localTime": time.Now(),
 			}).Info("Events received")
-			appsConfigUpdateNeeded := false
 			if _, ok := eventSummary.EventsCount["APP_STATE_CHANGE"]; ok {
 				appsConfigUpdateNeeded = true
 			}
 			if _, ok := eventSummary.EventsCount["INSTANCE_STATE_CHANGE"]; ok {
 				appsConfigUpdateNeeded = true
 			}
-			if appsConfigUpdateNeeded || leaderShifted {
-				appsRefreshed = refreshApps(droveClient.httpClient, namespace, leaderShifted)
-			} else {
+			if !appsConfigUpdateNeeded {
 				logger.Debug("Irrelevant events ignored")
 			}
 		} else {
 			logger.WithFields(logrus.Fields{
 				"events":    eventSummary.EventsCount,
 				"namespace": namespace,
-			}).Debug("New Events received")
+			}).Debug("No New Events received")
 		}
+	}
+	if appsConfigUpdateNeeded || leaderShifted {
+		appsRefreshed = refreshApps(droveClient.httpClient, namespace, leaderShifted)
+	} else {
+		logger.Debug("No change in leader as well as apps")
 	}
 	appsConfigUpdateChannel <- appsRefreshed
 }
-
 func pollingEvents() {
 	var waitGroup sync.WaitGroup
 	appsConfigUpdateChannel := make(chan bool, len(droveClients))
