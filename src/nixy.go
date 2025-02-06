@@ -124,7 +124,7 @@ type EndpointStatus struct {
 type Health struct {
 	Config             Status
 	Template           Status
-	NamesapceEndpoints map[string][]EndpointStatus
+	NamespaceEndpoints map[string][]EndpointStatus
 }
 
 // Global variables
@@ -179,7 +179,7 @@ var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{I
 
 func newHealth() Health {
 	var h Health
-	h.NamesapceEndpoints = make(map[string][]EndpointStatus)
+	h.NamespaceEndpoints = make(map[string][]EndpointStatus)
 	for _, nsConfig := range config.DroveNamespaces {
 		e := []EndpointStatus{}
 		for _, ep := range nsConfig.Drove {
@@ -190,7 +190,7 @@ func newHealth() Health {
 			s.Message = "OK"
 			e = append(e, s)
 		}
-		h.NamesapceEndpoints[nsConfig.Name] = e
+		h.NamespaceEndpoints[nsConfig.Name] = e
 	}
 	return h
 }
@@ -267,8 +267,8 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 			health.Config.Healthy = true
 		}
 	}
-	anyNamesapceDown := false
-	for _, nsEnpoint := range health.NamesapceEndpoints {
+	anyNamespaceDown := false
+	for _, nsEnpoint := range health.NamespaceEndpoints {
 		allBackendsDownForGivenNS := true
 		for _, endpoint := range nsEnpoint {
 			if endpoint.Healthy {
@@ -276,9 +276,9 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		anyNamesapceDown = anyNamesapceDown || allBackendsDownForGivenNS
+		anyNamespaceDown = anyNamespaceDown || allBackendsDownForGivenNS
 	}
-	if anyNamesapceDown {
+	if anyNamespaceDown {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 
