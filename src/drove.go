@@ -488,6 +488,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 					newapp.Groups = existingApp.Groups
 					if existingGroup, ok := newapp.Groups[groupName]; ok {
 						existingGroup.Hosts = append(newapp.Hosts, existingGroup.Hosts...)
+						newapp.Groups[groupName] = existingGroup
 					} else {
 						newapp.Groups[groupName] = hostGroup
 					}
