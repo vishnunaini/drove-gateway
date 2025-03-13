@@ -1,4 +1,4 @@
-module nixy
+module github.com/phonepe/drove-gateway
 
 go 1.17
 

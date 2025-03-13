@@ -1,5 +1,5 @@
 [Unit]
-Description=nixy - nginx marathon/mesos proxy
+Description=drove-gateway - traffic gateway for instances on drove cluster
 After=network.target
 StartLimitIntervalSec=0
 [Service]
@@ -9,7 +9,8 @@ Type=simple
 Restart=always
 RestartSec=1
 User=root
-ExecStart=/usr/bin/nixy -f /etc/nixy/nixy.toml 2>&1 | logger -t nixy
+ExecStart=/usr/bin/drove-gateway -f /etc/drove-gateway/drove-gateway.toml 2>&1 | logger -t drove-gateway
 
 [Install]
 WantedBy=multi-user.target
+

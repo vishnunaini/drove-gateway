@@ -22,9 +22,9 @@ if [ -n "${CONFIG_FILE_PATH}" ]; then
     echo "Config file path updated to ${CONFIG_FILE_PATH}"
     export CONFIG_PATH="${CONFIG_FILE_PATH}"
 else
-    export CONFIG_PATH="./nixy.toml"
+    export CONFIG_PATH="./drove-gateway.toml"
     if [ -z "${DROVE_CONTROLLERS}" ]; then
-        echo "Error: DROVE_CONTROLLERS is a mandatory parameter for nixy to work."
+        echo "Error: DROVE_CONTROLLERS is a mandatory parameter for drove-gateway to work."
         exit 1
     fi
     IFS=',' read -r -a hosts <<< "${DROVE_CONTROLLERS}"
@@ -47,7 +47,7 @@ else
 
     fi
 
-    envsubst > nixy.toml < docker-nixy.toml.subst
+    envsubst > drove-gateway.toml < docker-gateway.toml.subst
 fi
 # envsubst > nginx.tmpl < docker-nginx.tmpl.subst
 
@@ -77,8 +77,8 @@ if [ "${DEBUG:-0}" -ne 0 ]; then
   cat "${TEMPLATE_PATH}"
 fi
 # run application
-CMD=$(eval echo "./nixy -f ${CONFIG_PATH}")
-echo "Starting Nixy by running command: ${CMD}"
+CMD=$(eval echo "./drove-gateway -f ${CONFIG_PATH}")
+echo "Starting drove-gateway by running command: ${CMD}"
 
 service nginx start
 service cron start
