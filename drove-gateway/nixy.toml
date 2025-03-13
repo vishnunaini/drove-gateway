@@ -1,4 +1,4 @@
-# Nixy listening port
+# drove-gateway listening port
 address = "127.0.0.1"
 port = "6000"
 
@@ -26,7 +26,7 @@ event_refresh_interval_sec = 5
 # Statsd settings
 #[statsd]
 #addr = "10.57.8.171:8125" # optional for statistics
-#namespace = "nixy.my_mesos_cluster"
+#namespace = "drove-gateway.my_mesos_cluster"
 #sample_rate = 100
 
 
@@ -37,7 +37,7 @@ drove = ["https://localhost:8080"] # add all HA cluster nodes in priority order.
 user = "" # leave empty if no auth is required.
 pass = ""
 leader_vhost = "drove.ssdev.stage1"
-# Nixy realm, set this if you want to be able to filter your apps (e.g. when you have different loadbalancers which should expose different apps)
+# drove-gateway realm, set this if you want to be able to filter your apps (e.g. when you have different loadbalancers which should expose different apps)
 # Put your subdomain here. It will be used to match the subdomain of the exposed apps
 realm = "blah1.xxx.stage1"
 
@@ -47,6 +47,6 @@ drove = ["https://localhost:8080"] # add all HA cluster nodes in priority order.
 user = "" # leave empty if no auth is required.
 pass = ""
 leader_vhost = "drove.ssdev.stage2"
-# Nixy realm, set this if you want to be able to filter your apps (e.g. when you have different loadbalancers which should expose different apps)
+# drove-gateway realm, set this if you want to be able to filter your apps (e.g. when you have different loadbalancers which should expose different apps)
 # Put your subdomain here. It will be used to match the subdomain of the exposed apps
 realm = "blah2.xxx.stage2"

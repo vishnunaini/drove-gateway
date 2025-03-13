@@ -14,7 +14,7 @@ func setupStatsd() (g2s.Statter, error) {
 
 	if config.Statsd.Namespace == "" {
 		hostname, _ := os.Hostname()
-		config.Statsd.Namespace = "nixy." + hostname
+		config.Statsd.Namespace = "drove-gateway." + hostname
 	}
 
 	if config.Statsd.SampleRate < 1 || config.Statsd.SampleRate > 100 {

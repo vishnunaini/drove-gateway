@@ -1,4 +1,6 @@
 nixy-nplus
+nixy
+bin/drove-gateway
 *local*
 dist
 nginx*.conf

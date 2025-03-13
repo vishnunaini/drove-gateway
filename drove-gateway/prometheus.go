@@ -6,7 +6,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-const ns = "nixy"
+const ns = "drove-gateway"
 
 var (
 	countFailedReloads = prometheus.NewCounter(

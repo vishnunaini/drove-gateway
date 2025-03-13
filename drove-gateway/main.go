@@ -221,7 +221,7 @@ func validateConfig() error {
 	return nil
 }
 
-func nixyReload(w http.ResponseWriter, r *http.Request) {
+func gatewayReload(w http.ResponseWriter, r *http.Request) {
 	logger.WithFields(logrus.Fields{
 		"client": r.RemoteAddr,
 	}).Info("Reload triggered via /v1/reload")
@@ -241,7 +241,7 @@ func nixyReload(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func nixyHealth(w http.ResponseWriter, r *http.Request) {
+func gatewayHealth(w http.ResponseWriter, r *http.Request) {
 	if config.NginxReloadDisabled {
 		health.Template.Message = "Templating disabled"
 		health.Template.Healthy = true
@@ -288,14 +288,14 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func nixyConfig(w http.ResponseWriter, r *http.Request) {
+func gatewayConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "application/json; charset=utf-8")
 	b, _ := json.MarshalIndent(&db, "", "  ")
 	w.Write(b)
 	return
 }
 
-func nixyVersion(w http.ResponseWriter, r *http.Request) {
+func gatewayVersion(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "version: "+version)
 	fmt.Fprintln(w, "commit: "+commit)
 	fmt.Fprintln(w, "date: "+date)
@@ -303,8 +303,8 @@ func nixyVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	configtoml := flag.String("f", "nixy.toml", "Path to config. (default nixy.toml)")
-	versionflag := flag.Bool("v", false, "prints current nixy version")
+	configtoml := flag.String("f", "drove-gateway.toml", "Path to config. (default drove-gateway.toml)")
+	versionflag := flag.Bool("v", false, "prints current drove-gateway version")
 	flag.Parse()
 	if *versionflag {
 		fmt.Printf("version: %s\n", version)
@@ -343,10 +343,10 @@ func main() {
 	setupPrometheusMetrics()
 	setupDataManager()
 	mux := mux.NewRouter()
-	mux.HandleFunc("/", nixyVersion)
-	mux.HandleFunc("/v1/reload", nixyReload)
-	mux.HandleFunc("/v1/config", nixyConfig)
-	mux.HandleFunc("/v1/health", nixyHealth)
+	mux.HandleFunc("/", gatewayVersion)
+	mux.HandleFunc("/v1/reload", gatewayReload)
+	mux.HandleFunc("/v1/config", gatewayConfig)
+	mux.HandleFunc("/v1/health", gatewayHealth)
 	mux.Handle("/v1/metrics", promhttp.Handler())
 	var s_tls *http.Server
 	var s *http.Server
@@ -378,10 +378,10 @@ func main() {
 	// forceReload()
 	logger.Info("Address:" + config.Address)
 	if config.PortWithTLS {
-		logger.Info("starting nixy on https://" + config.Address + ":" + config.Port)
+		logger.Info("starting drove-gateway on https://" + config.Address + ":" + config.Port)
 		err = s_tls.ListenAndServeTLS(config.TLScertFile, config.TLSkeyFile)
 	} else {
-		logger.Info("starting nixy on http://" + config.Address + ":" + config.Port)
+		logger.Info("starting drove-gateway on http://" + config.Address + ":" + config.Port)
 		err = s.ListenAndServe()
 	}
 	if err != nil {
