@@ -266,6 +266,7 @@ func nginxPlus(data *RenderingData) error {
 
 	logger.WithFields(logrus.Fields{"apps": data.Apps}).Debug("Updating upstreams for the whitelisted http/s drove vhosts")
 	for _, app := range data.Apps {
+		//Ensure UpdateHTTPServers is not called for streams TCP/UDP instances
 		isHTTPVHost := false
 		for _, t := range app.Hosts {
 			if (string(t.PortType) == "http") || (string(t.PortType) == "https") {
@@ -273,6 +274,7 @@ func nginxPlus(data *RenderingData) error {
 			}
 
 		}
+
 		if isHTTPVHost {
 			var newFormattedServers []string
 			for _, t := range app.Hosts {
