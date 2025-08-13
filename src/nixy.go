@@ -323,7 +323,7 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 			health.Config.Healthy = true
 		}
 	}
-	anyNamesapceDown := false
+	anyNamespaceDown := false
 	for _, nsEnpoint := range health.NamespaceEndpoints {
 		allBackendsDownForGivenNS := true
 		for _, endpoint := range nsEnpoint {
@@ -332,9 +332,9 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		anyNamesapceDown = anyNamesapceDown || allBackendsDownForGivenNS
+		anyNamespaceDown = anyNamespaceDown || allBackendsDownForGivenNS
 	}
-	if anyNamesapceDown {
+	if anyNamespaceDown {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 

@@ -252,7 +252,6 @@ func pollingHandler(droveClient *DroveClient, appsConfigUpdateChannel chan<- boo
 	}
 	appsConfigUpdateChannel <- appsRefreshed
 }
-
 func pollingEvents() {
 	var waitGroup sync.WaitGroup
 	appsConfigUpdateChannel := make(chan bool, len(droveClients))
@@ -489,6 +488,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 					newapp.Groups = existingApp.Groups
 					if existingGroup, ok := newapp.Groups[groupName]; ok {
 						existingGroup.Hosts = append(newapp.Hosts, existingGroup.Hosts...)
+						newapp.Groups[groupName] = existingGroup
 					} else {
 						newapp.Groups[groupName] = hostGroup
 					}
