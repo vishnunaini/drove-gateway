@@ -73,7 +73,7 @@ type Config struct {
 	TLSkeyFile              string           `json:"-" toml:"port_tls_keyfile"`
 	DroveNamespaces         []DroveNamespace `json:"-" toml:"namespaces"`
 	EventRefreshIntervalSec int              `json:"-" toml:"event_refresh_interval_sec"`
-	ProxyPlatform           string           `json:"_" toml:"proxy_platform"`
+	ProxyPlatform           string           `json:"-" toml:"proxy_platform"`
 	Nginxplusapiaddr        string           `json:"-" toml:"nginxplusapiaddr"`
 	NginxReloadDisabled     bool             `json:"-" toml:"nginx_reload_disabled"`
 	NginxConfig             string           `json:"-" toml:"nginx_config"`
@@ -81,7 +81,7 @@ type Config struct {
 	NginxCmd                string           `json:"-" toml:"nginx_cmd"`
 	NginxIgnoreCheck        bool             `json:"-" toml:"nginx_ignore_check"`
 	HaproxySocketAddr       string           `json:"-" toml:"haproxysocketaddr"`
-	HaproxyReloadDisabled   bool             `json:"_" toml:"haproxy_reload_disabled"`
+	HaproxyReloadDisabled   bool             `json:"-" toml:"haproxy_reload_disabled"`
 	HaproxyConfig           string           `json:"-" toml:"haproxy_config"`
 	HaproxyTemplate         string           `json:"-" toml:"haproxy_template"`
 	HaproxyReloadCmd        string           `json:"-" toml:"haproxy_reload_cmd"`
