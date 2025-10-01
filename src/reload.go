@@ -49,14 +49,17 @@ func reload() error {
 	var upstreamUpdateAPIEnabled bool
 
 	if (config.ProxyPlatform == "nginx") && (len(config.Nginxplusapiaddr) == 0 || config.Nginxplusapiaddr == "") {
+		logger.Debug("Platform: " + config.ProxyPlatform + " API addr: " + config.Nginxplusapiaddr)
 		//Nginx plus http_api is disabled
 		upstreamUpdateAPIEnabled = false
 	} else if (config.ProxyPlatform == "haproxy") && (len(config.HaproxySocketAddr) == 0 || config.HaproxySocketAddr == "") {
+		logger.Debug("Platform: " + config.ProxyPlatform + " Socket addr: " + config.HaproxySocketAddr)
 		//HAProxy Runtime API is disabled
 		upstreamUpdateAPIEnabled = false
 	}
 
 	if !upstreamUpdateAPIEnabled {
+		logger.Debug("Runtime API calls to update upstreams are disabled")
 		//Any use of runtime API is disabled
 		err = updateAndReloadConfig(&data, false)
 		if err != nil {
@@ -68,6 +71,7 @@ func reload() error {
 			return err
 		}
 	} else {
+		logger.Debug("Runtime API calls to update upstreams are enabled")
 		//Use of runtime API is enabled
 		//For HAProxy, config is generated but not loaded even when reload is disabled as there is not other way to persist state across reloads
 		//For Nginx+, ngx http_api maintains it's own state files if referenced in the running nginx config. Hence no templating is done at all when reload is disabled
@@ -96,7 +100,7 @@ func reload() error {
 			//For HAProxy, config is generated but not loaded even when reload is disabled as there is not other way to persist state across reloads
 			updateWithoutReloadConfig(&data)
 			// Create a context with a timeout for the API call.
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.apiTimeout)*time.Second)
 			defer cancel()
 			err = haproxyRuntimeAPI(&data, ctx)
 		}
@@ -119,12 +123,13 @@ func reload() error {
 }
 
 func updateWithoutReloadConfig(data *RenderingData) error {
+	logger.Debug("Updating config without reload")
 	config.LastUpdates.LastSync = time.Now()
 	err := writeConf(data)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
-		}).Error("unable to generate nginx config")
+		}).Error("unable to generate " + config.ProxyPlatform + " config")
 		go statsCount("reload.failed", 1)
 		go countFailedReloads.Inc()
 		return err
@@ -134,6 +139,7 @@ func updateWithoutReloadConfig(data *RenderingData) error {
 }
 
 func updateAndReloadConfig(data *RenderingData, reloadDisabled bool) error {
+	logger.Debug("Updating config with reload")
 	start := time.Now()
 	config.LastUpdates.LastSync = time.Now()
 	vhosts := db.ReadAllKnownVhosts()
@@ -319,7 +325,6 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 			return fmt.Errorf("HAProxy socket file does not exist: %s", haproxySocket)
 		}
 	}
-
 	// 3. Initialize the runtime client with context and configuration options.
 	runtimeClient, err := runtime_api.New(ctx,
 		runtime_options.MasterSocket(haproxySocket),
@@ -329,7 +334,7 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 	}
 
 	// 4. Test the connection to ensure the runtime API is responsive.
-	if _, err := runtimeClient.Execute("show info"); err != nil {
+	if _, err := runtimeClient.ExecuteRaw("show info"); err != nil {
 		return fmt.Errorf("error connecting to HAProxy socket, check if HAProxy is running and socket is correct: %w", err)
 	}
 	logger.Debug("Successfully connected to HAProxy runtime API")
@@ -659,6 +664,7 @@ func reloadNginx() error {
 }
 
 func reloadHaproxy() error {
+	logger.Debug("Reloading haproxy with cmd: " + config.HaproxyReloadCmd)
 	// This is to allow other cmds as well. Example "docker exec haproxy..." or SIGUSR2 to master worker
 	args := strings.Fields(config.HaproxyReloadCmd)
 	head := args[0]
