@@ -169,7 +169,7 @@ func setloglevel() {
 	case "error":
 		logLevel = logrus.ErrorLevel
 	default:
-		logger.Error("unknown loglevel. Defaulting to info")
+		logger.Warn("unknown loglevel. Defaulting to info")
 		logLevel = logrus.InfoLevel
 	}
 
