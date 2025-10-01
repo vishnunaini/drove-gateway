@@ -93,11 +93,12 @@ func reload() error {
 				logger.Debug("No changes detected in vhosts. No config update is necessary. Upstream updates will happen via " + config.ProxyPlatform + " apis")
 			}
 		}
-
+		logger.Debug("Updating upstreams via " + config.ProxyPlatform + " api")
 		if config.ProxyPlatform == "nginx" {
 			err = nginxPlus(&data)
 		} else if config.ProxyPlatform == "haproxy" {
 			//For HAProxy, config is generated but not loaded even when reload is disabled as there is not other way to persist state across reloads
+			logger.Debug("HAProxy: Updating config without reload")
 			updateWithoutReloadConfig(&data)
 			// Create a context with a timeout for the API call.
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.apiTimeout)*time.Second)
