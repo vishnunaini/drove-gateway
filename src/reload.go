@@ -56,6 +56,8 @@ func reload() error {
 		logger.Debug("Platform: " + config.ProxyPlatform + " Socket addr: " + config.HaproxySocketAddr)
 		//HAProxy Runtime API is disabled
 		upstreamUpdateAPIEnabled = false
+	} else {
+		upstreamUpdateAPIEnabled = true
 	}
 
 	if !upstreamUpdateAPIEnabled {
