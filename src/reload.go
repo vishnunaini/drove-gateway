@@ -19,8 +19,8 @@ import (
 	nplus "github.com/nginxinc/nginx-plus-go-client/client"
 	"github.com/sirupsen/logrus"
 
-	runtime_api "github.com/haproxytech/client-native/v6/runtime"
-	runtime_options "github.com/haproxytech/client-native/v6/runtime/options"
+	runtime_api "github.com/haproxytech/client-native/v5/runtime"
+	runtime_options "github.com/haproxytech/client-native/v5/runtime/options"
 )
 
 type NamespaceRenderingData struct {
@@ -317,30 +317,30 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 		"haproxy_socket": haproxySocket,
 	}).Debug("Preparing to connect to HAProxy runtime API")
 
-	// 1. Validate that the socket path is configured.
 	if haproxySocket == "" {
 		return errors.New("HAProxy socket address is not configured")
 	}
 
-	// 2. For Unix sockets, ensure the socket file exists before attempting to connect.
 	if IsUnixSocketAddr(haproxySocket) {
 		if _, err := os.Stat(haproxySocket); os.IsNotExist(err) {
 			return fmt.Errorf("HAProxy socket file does not exist: %s", haproxySocket)
 		}
 	}
-	// 3. Initialize the runtime client with context and configuration options.
+	socketList := map[int]string{1: haproxySocket}
+
 	runtimeClient, err := runtime_api.New(ctx,
-		runtime_options.MasterSocket(haproxySocket),
+		runtime_options.Sockets(socketList),
 	)
 	if err != nil {
 		return fmt.Errorf("error initializing HAProxy runtime client: %w", err)
 	}
 
 	// 4. Test the connection to ensure the runtime API is responsive.
-	if _, err := runtimeClient.ExecuteRaw("show info"); err != nil {
+	_, err = runtimeClient.GetInfo()
+	if err != nil {
 		return fmt.Errorf("error connecting to HAProxy socket, check if HAProxy is running and socket is correct: %w", err)
 	}
-	logger.Debug("Successfully connected to HAProxy runtime API")
+	logger.Debug("Successfully connected to HAProxy runtime API ")
 
 	// Update upstreams for each app
 	for appID, app := range data.Apps {
@@ -373,53 +373,34 @@ func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
 	// 1. Get the current state of servers from HAProxy
 	currentServers, err := client.GetServersState(backend)
 	if err != nil {
+		// If the backend doesn't exist, HAProxy returns an error. This is not fatal.
 		logger.WithFields(logrus.Fields{
 			"backend": backend,
 			"error":   err,
 		}).Warning("Cannot get servers for backend, it may not exist in the config. Skipping.")
-		return nil // Not a fatal error, just skip this backend.
+		return nil
 	}
+	logger.WithFields(logrus.Fields{
+		"backend": backend,
+		"servers": len(currentServers),
+	}).Debug("Current servers in HAProxy backend")
 
-	// 2. Build a map of the current servers for efficient lookup.
-	currentServerMap := make(map[string]bool)
-	for _, srv := range currentServers {
-		currentServerMap[srv.Name] = true
-	}
-
-	// 3. Build a map of the desired servers from the application data.
+	// 2. Build a map of the desired servers from the application data.
 	desiredServerMap := make(map[string]Host)
 	for _, host := range app.Hosts {
 		serverName := generateStableServerName(host)
 		desiredServerMap[serverName] = host
 	}
 
-	// 4. Reconcile states: add/update new servers and disable/delete old ones.
-
-	// Add or enable servers that are in the desired state.
-	for serverName, desiredHost := range desiredServerMap {
-		if _, exists := currentServerMap[serverName]; !exists {
-			// Server does not exist, so we need to add it.
-			// This requires a 'server-template' in your HAProxy config.
-			logger.WithFields(logrus.Fields{
-				"backend": backend,
-				"server":  serverName,
-			}).Info("Adding new server to HAProxy backend")
-			if err := client.AddServer(backend, serverName, fmt.Sprintf("%s:%d", desiredHost.Host, desiredHost.Port)); err != nil {
-				logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")
-			}
-		} else {
-			// Server exists, ensure it's enabled and the address is correct.
-			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Trace("Enabling existing server")
-			if err := client.SetServerAddr(backend, serverName, desiredHost.Host, int(desiredHost.Port)); err != nil {
-				logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server address")
-			}
-			if err := client.SetServerState(backend, serverName, "ready"); err != nil {
-				logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server state to ready")
-			}
-		}
+	// 3. Build a map of current servers for efficient lookup and tracking.
+	currentServerMap := make(map[string]bool)
+	for _, srv := range currentServers {
+		currentServerMap[srv.Name] = true
 	}
 
-	// Disable servers that are no longer in the desired state.
+	// 4. Reconcile states: add/update new servers and disable old ones.
+
+	// Disable servers that are no longer in the desired state. Disable bad servers on priority. Delete them later.
 	for _, srv := range currentServers {
 		if _, exists := desiredServerMap[srv.Name]; !exists {
 			logger.WithFields(logrus.Fields{
@@ -432,14 +413,54 @@ func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
 		}
 	}
 
+	// Add or enable servers that are in the desired state.
+	for serverName, desiredHost := range desiredServerMap {
+		if _, exists := currentServerMap[serverName]; !exists {
+			// Server does not exist, so we need to add it.
+			// This requires a 'server-template' in your HAProxy config and HAProxy >= 2.0.
+			logger.WithFields(logrus.Fields{
+				"backend": backend,
+				"server":  serverName,
+			}).Info("Adding new server to HAProxy backend")
+			if err := client.AddServer(backend, serverName, fmt.Sprintf("%s:%d", desiredHost.Host, desiredHost.Port)); err != nil {
+				logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")
+			}
+		} else {
+			// Server exists, ensure it's enabled and the address is correct.
+			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Trace("Updating existing server")
+			if err := client.SetServerAddr(backend, serverName, desiredHost.Host, int(desiredHost.Port)); err != nil {
+				logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server address")
+			}
+			if err := client.SetServerState(backend, serverName, "ready"); err != nil {
+				logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server state to ready")
+			}
+		}
+	}
+
+	// Delete servers that are no longer in the desired state (and are now in maint).
+	// This requires HAProxy >= 2.0 and a 'server-template' in the backend.
+	for _, srv := range currentServers {
+		if _, exists := desiredServerMap[srv.Name]; !exists {
+			logger.WithFields(logrus.Fields{
+				"backend": backend,
+				"server":  srv.Name,
+			}).Info("Deleting stale server from HAProxy backend")
+			if err := client.DeleteServer(backend, srv.Name); err != nil {
+				// Log error but continue, as the server is already in maint state.
+				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to delete server")
+			}
+		}
+	}
+
+	logger.WithField("backend", backend).Debug("Successfully reconciled HAProxy backend")
 	return nil
 }
 
 // generateStableServerName creates a consistent, valid server name from a host.
 func generateStableServerName(host Host) string {
 	// Replace characters that are invalid in HAProxy server names.
-	sanitizer := strings.NewReplacer(".", "_", ":", "_")
-	return fmt.Sprintf("srv_%s_%d", sanitizer.Replace(host.Host), host.Port)
+	sanitizer := strings.NewReplacer(":", "_")
+	return fmt.Sprintf("server_%s_%d", sanitizer.Replace(host.Host), host.Port)
 }
 
 func nginxPlus(data *RenderingData) error {
