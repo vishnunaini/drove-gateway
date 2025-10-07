@@ -478,7 +478,6 @@ func reconcileHAProxyBackend(client runtime_api.Runtime, backend string, desired
 	return nil
 }
 
-// haproxyBuildDesiredServerMap creates a map of desired servers from the host list for efficient lookup.
 func haproxyBuildDesiredServerMap(desiredHosts []Host) map[string]Host {
 	serverMap := make(map[string]Host)
 	for _, host := range desiredHosts {
@@ -488,7 +487,6 @@ func haproxyBuildDesiredServerMap(desiredHosts []Host) map[string]Host {
 	return serverMap
 }
 
-// haproxyBuildCurrentServerMap creates a map of current servers from the HAProxy runtime state.
 func haproxyBuildCurrentServerMap(currentServers []*runtime_models.RuntimeServer) map[string]runtime_models.RuntimeServer {
 	serverMap := make(map[string]runtime_models.RuntimeServer)
 	for _, srv := range currentServers {
@@ -497,7 +495,6 @@ func haproxyBuildCurrentServerMap(currentServers []*runtime_models.RuntimeServer
 	return serverMap
 }
 
-// haproxyRemoveStaleServers identifies and removes servers from HAProxy that are not in the desired configuration.
 func haproxyRemoveStaleServers(client runtime_api.Runtime, backend string, currentServers []*runtime_models.RuntimeServer, desiredServerMap map[string]Host) {
 	for _, srv := range currentServers {
 		if _, exists := desiredServerMap[srv.Name]; !exists {
@@ -512,7 +509,6 @@ func haproxyRemoveStaleServers(client runtime_api.Runtime, backend string, curre
 				statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_state_maint")
 			}
 
-			// Delete the server.
 			if err := client.DeleteServer(backend, srv.Name); err != nil {
 				haproxyAPICallsFailed.WithLabelValues("delete_server").Inc()
 				statsCountVec("haproxy_api_calls_failed_total", 1, "delete_server")
@@ -525,7 +521,6 @@ func haproxyRemoveStaleServers(client runtime_api.Runtime, backend string, curre
 	}
 }
 
-// haproxyAddOrUpdateServers adds new servers or updates existing ones to match the desired configuration.
 func haproxyAddOrUpdateServers(client runtime_api.Runtime, backend string, desiredServerMap map[string]Host, currentServerMap map[string]runtime_models.RuntimeServer) {
 	for serverName, host := range desiredServerMap {
 		if _, exists := currentServerMap[serverName]; !exists {
@@ -536,7 +531,6 @@ func haproxyAddOrUpdateServers(client runtime_api.Runtime, backend string, desir
 	}
 }
 
-// haproxyAddNewServer adds a new server to the specified backend in HAProxy.
 func haproxyAddNewServer(client runtime_api.Runtime, backend, serverName string, host Host) {
 	logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Info("Adding new server")
 	if err := client.AddServer(backend, serverName, fmt.Sprintf("%s:%d", host.Host, host.Port)); err != nil {
@@ -548,7 +542,6 @@ func haproxyAddNewServer(client runtime_api.Runtime, backend, serverName string,
 	haproxyAPICallsSuccessful.WithLabelValues("add_server").Inc()
 	statsCountVec("haproxy_api_calls_successful_total", 1, "add_server")
 
-	// Set the newly added server's state to 'ready'.
 	if err := client.SetServerState(backend, serverName, "ready"); err != nil {
 		haproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
 		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_state_ready")
@@ -559,10 +552,9 @@ func haproxyAddNewServer(client runtime_api.Runtime, backend, serverName string,
 	}
 }
 
-// haproxyUpdateExistingServer checks if an existing server needs an update and performs it if necessary.
 func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName string, host Host, currentServer runtime_models.RuntimeServer) {
-	// Resolve desired hostname to IP for a reliable comparison with HAProxy's state.
-	desiredIP := host.Host // Default to hostname if resolution fails.
+	// Resolve desired hostname to IP for a comparison with HAProxy's runtime state.
+	desiredIP := host.Host // Default to hostname if resolution fails. This will help a force update even if resolution is unavailable.
 	resolveCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if resolvedIP, err := haproxyResolveHostnameToIP(resolveCtx, host.Host); err != nil {
@@ -578,7 +570,6 @@ func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName
 		return
 	}
 
-	// The server needs an update.
 	logger.WithFields(logrus.Fields{
 		"backend":           backend,
 		"server":            serverName,
@@ -590,7 +581,6 @@ func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName
 		"desired_port":      host.Port,
 	}).Info("Updating existing server")
 
-	// Update server address.
 	if err := client.SetServerAddr(backend, serverName, desiredIP, int(host.Port)); err != nil {
 		haproxyAPICallsFailed.WithLabelValues("set_server_addr").Inc()
 		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_addr")
@@ -600,7 +590,6 @@ func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName
 		statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_addr")
 	}
 
-	// Ensure server state is 'ready'.
 	if err := client.SetServerState(backend, serverName, "ready"); err != nil {
 		haproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
 		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_state_ready")
@@ -611,7 +600,6 @@ func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName
 	}
 }
 
-// haproxyResolveHostnameToIP resolves a hostname to its first IP address within the given context.
 func haproxyResolveHostnameToIP(ctx context.Context, hostname string) (string, error) {
 	resolver := net.Resolver{}
 	ips, err := resolver.LookupHost(ctx, hostname)
@@ -654,7 +642,7 @@ func generateStableHaproxyBackendName(app App, groupName string) string {
 	return vhost
 }
 
-// generateStableHaproxyServerName creates a consistent, valid server name from a host.
+// generateStableHaproxyServerName creates a consistent, valid unique server name from a host.
 func generateStableHaproxyServerName(host Host) string {
 	// Replace characters that are invalid in HAProxy server names.
 	sanitizer := strings.NewReplacer(":", config.HaproxyServerNameHostPortSeparator)
