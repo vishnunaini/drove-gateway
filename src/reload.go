@@ -26,6 +26,7 @@ import (
 type NamespaceRenderingData struct {
 	LeaderVHost string
 	Leader      LeaderController
+	RoutingTag  string `json:"-"`
 }
 
 type RenderingData struct {
@@ -62,8 +63,19 @@ func reload() error {
 
 	if !upstreamUpdateAPIEnabled {
 		logger.Debug("Runtime API calls to update upstreams are disabled")
-		//Any use of runtime API is disabled
-		err = updateAndReloadConfig(&data, false)
+		// Any use of runtime API is disabled, so we must perform a full reload.
+		// We still need to calculate backend names to update the database.
+		currentBackendNames := make(map[string]bool)
+		for _, app := range data.Apps {
+			if app.Vhost != "" {
+				var backendName string
+				backendName = generateStableBackendName(app, config.ProxyPlatform)
+				if backendName != "" {
+					currentBackendNames[backendName] = true
+				}
+			}
+		}
+		err = updateAndReloadConfig(&data, false, currentBackendNames)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
@@ -75,16 +87,38 @@ func reload() error {
 	} else {
 		logger.Debug("Runtime API calls to update upstreams are enabled")
 		//Use of runtime API is enabled
-		//For HAProxy, config is generated but not loaded even when reload is disabled as there is not other way to persist state across reloads
+		//For HAProxy, config is generated but not loaded even when reload is disabled as there is no other way to persist state across reloads
 		//For Nginx+, ngx http_api maintains it's own state files if referenced in the running nginx config. Hence no templating is done at all when reload is disabled
 		if (ConfigReloadDisabled) && config.ProxyPlatform == "nginx" {
 			logger.Debug("Nginx: Template reload has been disabled")
 		} else {
 			vhosts := db.ReadAllKnownVhosts()
 			lastKnownVhosts := db.ReadLastKnownVhosts()
-			if !reflect.DeepEqual(vhosts, lastKnownVhosts) {
-				logger.Info("Vhost changes detected. Need to reload config")
-				err = updateAndReloadConfig(&data, false)
+
+			// Generate a set of current backend names to detect changes.
+			currentBackendNames := make(map[string]bool)
+			for _, app := range data.Apps {
+				if app.Vhost != "" {
+					var backendName string
+					backendName = generateStableBackendName(app, config.ProxyPlatform)
+					if backendName != "" {
+						currentBackendNames[backendName] = true
+					}
+				}
+			}
+			lastKnownBackendNames := db.ReadLastKnownBackends()
+
+			// A reload is needed if vhosts have changed OR if the set of backend names has changed.
+			// A change in backend names implies a new routingTagValue has been introduced,
+			// requiring a new backend block in the config.
+			if !reflect.DeepEqual(vhosts, lastKnownVhosts) || !reflect.DeepEqual(currentBackendNames, lastKnownBackendNames) {
+				if !reflect.DeepEqual(vhosts, lastKnownVhosts) {
+					logger.Info("Vhost changes detected. Need to reload config")
+				} else {
+					logger.Info("Routing tag changes detected, resulting in new backend names. Need to reload config")
+				}
+
+				err = updateAndReloadConfig(&data, false, currentBackendNames)
 				if err != nil {
 					logger.WithFields(logrus.Fields{
 						"error": err.Error(),
@@ -92,7 +126,7 @@ func reload() error {
 					return err
 				}
 			} else {
-				logger.Debug("No changes detected in vhosts. No config update is necessary. Upstream updates will happen via " + config.ProxyPlatform + " apis")
+				logger.Debug("No changes detected in vhosts or backend names. No config update is necessary. Upstream updates will happen via " + config.ProxyPlatform + " apis")
 			}
 		}
 		logger.Debug("Updating upstreams via " + config.ProxyPlatform + " api")
@@ -107,7 +141,13 @@ func reload() error {
 			defer cancel()
 			err = haproxyRuntimeAPI(&data, ctx)
 		}
-
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"error": err.Error(),
+			}).Error("unable to update upstreams via " + config.ProxyPlatform + " api")
+			go statsCount("reload.failed", 1)
+			go countFailedReloads.Inc()
+		}
 	}
 	if err != nil {
 		logger.WithFields(logrus.Fields{
@@ -141,18 +181,18 @@ func updateWithoutReloadConfig(data *RenderingData) error {
 	return nil
 }
 
-func updateAndReloadConfig(data *RenderingData, reloadDisabled bool) error {
+func updateAndReloadConfig(data *RenderingData, reloadDisabled bool, currentBackendNames map[string]bool) error {
 	logger.Debug("Updating config with reload")
 	start := time.Now()
 	config.LastUpdates.LastSync = time.Now()
 	vhosts := db.ReadAllKnownVhosts()
 	err := writeConf(data)
 	if err != nil {
+		go countFailedReloads.Inc()
+		go statsCount("reloads_failed", 1)
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
-		}).Error("unable to generate nginx config")
-		go statsCount("reload.failed", 1)
-		go countFailedReloads.Inc()
+		}).Error("unable to write " + config.ProxyPlatform + " config")
 		return err
 	}
 	config.LastUpdates.LastConfigValid = time.Now()
@@ -172,15 +212,13 @@ func updateAndReloadConfig(data *RenderingData, reloadDisabled bool) error {
 			go countFailedReloads.Inc()
 		} else {
 			elapsed := time.Since(start)
-			logger.WithFields(logrus.Fields{
-				"took": elapsed,
-			}).Debug("config updated and reloaded successfully")
-			go statsCount("reload.success", 1)
-			go statsTiming("reload.time", elapsed)
 			go countSuccessfulReloads.Inc()
+			go statsCount("reloads_successful", 1)
 			go observeReloadTimeMetric(elapsed)
+			go statsTiming("reload_duration", elapsed)
 			config.LastUpdates.LastProxyProgramReload = time.Now()
 			db.UpdateLastKnownVhosts(vhosts)
+			db.UpdateLastKnownBackends(currentBackendNames)
 		}
 	}
 	return nil
@@ -204,9 +242,12 @@ func createRenderingData(data *RenderingData) {
 		data.Namespaces[name] = NamespaceRenderingData{
 			LeaderVHost: nmData.Drove.LeaderVHost,
 			Leader:      nmData.Leader,
+			RoutingTag:  nmData.Drove.RoutingTag,
 		}
+
 		//Merging App if already exists
 		for appId, appData := range nmData.Apps {
+			appData.RoutingTagKey = nmData.Drove.RoutingTag
 			if existingAppData, ok := allApps[appId]; ok {
 				//Appending hosts
 				existingAppData.Hosts = append(existingAppData.Hosts, appData.Hosts...)
@@ -256,7 +297,7 @@ func createRenderingData(data *RenderingData) {
 	data.Apps = allApps
 	logger.WithFields(logrus.Fields{
 		"data": data,
-	}).Debug("Rendering data generated")
+	}).Trace("Rendering data generated")
 	return
 }
 
@@ -354,9 +395,10 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 		err := updateHAProxyUpstream(runtimeClient, app)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
-				"app_id": appID,
-				"vhost":  app.Vhost,
-				"error":  err,
+				"app_id":     appID,
+				"vhost":      app.Vhost,
+				"routingTag": app.RoutingTagKey,
+				"error":      err,
 			}).Error("Failed to update HAProxy upstream")
 			// Continue with other apps instead of failing completely
 			continue
@@ -368,18 +410,21 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 
 // updateHAProxyUpstream reconciles the state of an HAProxy backend with the desired application hosts.
 func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
-	backend := app.Vhost
+	backend := generateStableHaproxyBackendName(app)
 
 	// 1. Get the current state of servers from HAProxy
 	currentServers, err := client.GetServersState(backend)
 	if err != nil {
-		// If the backend doesn't exist, HAProxy returns an error. This is not fatal.
+		// This is not a failure of the API call itself, but the backend not existing.
+		// So we don't increment a failure metric here.
 		logger.WithFields(logrus.Fields{
 			"backend": backend,
 			"error":   err,
 		}).Warning("Cannot get servers for backend, it may not exist in the config. Skipping.")
 		return nil
 	}
+	haproxyAPICallsSuccessful.WithLabelValues("get_servers_state").Inc()
+	statsCountVec("haproxy_api_calls_successful_total", 1, "get_servers_state")
 	logger.WithFields(logrus.Fields{
 		"backend": backend,
 		"servers": len(currentServers),
@@ -388,7 +433,7 @@ func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
 	// 2. Build a map of the desired servers from the application data.
 	desiredServerMap := make(map[string]Host)
 	for _, host := range app.Hosts {
-		serverName := generateStableServerName(host)
+		serverName := generateStableHaproxyServerName(host)
 		desiredServerMap[serverName] = host
 	}
 
@@ -408,7 +453,12 @@ func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
 				"server":  srv.Name,
 			}).Info("Disabling stale server in HAProxy backend")
 			if err := client.SetServerState(backend, srv.Name, "maint"); err != nil {
+				haproxyAPICallsFailed.WithLabelValues("set_server_state_maint").Inc()
+				statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_state_maint")
 				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to disable server")
+			} else {
+				haproxyAPICallsSuccessful.WithLabelValues("set_server_state_maint").Inc()
+				statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_state_maint")
 			}
 		}
 	}
@@ -423,16 +473,31 @@ func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
 				"server":  serverName,
 			}).Info("Adding new server to HAProxy backend")
 			if err := client.AddServer(backend, serverName, fmt.Sprintf("%s:%d", desiredHost.Host, desiredHost.Port)); err != nil {
+				haproxyAPICallsFailed.WithLabelValues("add_server").Inc()
+				statsCountVec("haproxy_api_calls_failed_total", 1, "add_server")
 				logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")
+			} else {
+				haproxyAPICallsSuccessful.WithLabelValues("add_server").Inc()
+				statsCountVec("haproxy_api_calls_successful_total", 1, "add_server")
 			}
 		} else {
 			// Server exists, ensure it's enabled and the address is correct.
 			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Trace("Updating existing server")
 			if err := client.SetServerAddr(backend, serverName, desiredHost.Host, int(desiredHost.Port)); err != nil {
+				haproxyAPICallsFailed.WithLabelValues("set_server_addr").Inc()
+				statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_addr")
 				logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server address")
+			} else {
+				haproxyAPICallsSuccessful.WithLabelValues("set_server_addr").Inc()
+				statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_addr")
 			}
 			if err := client.SetServerState(backend, serverName, "ready"); err != nil {
+				haproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
+				statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_state_ready")
 				logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server state to ready")
+			} else {
+				haproxyAPICallsSuccessful.WithLabelValues("set_server_state_ready").Inc()
+				statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_state_ready")
 			}
 		}
 	}
@@ -447,7 +512,12 @@ func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
 			}).Info("Deleting stale server from HAProxy backend")
 			if err := client.DeleteServer(backend, srv.Name); err != nil {
 				// Log error but continue, as the server is already in maint state.
+				haproxyAPICallsFailed.WithLabelValues("delete_server").Inc()
+				statsCountVec("haproxy_api_calls_failed_total", 1, "delete_server")
 				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to delete server")
+			} else {
+				haproxyAPICallsSuccessful.WithLabelValues("delete_server").Inc()
+				statsCountVec("haproxy_api_calls_successful_total", 1, "delete_server")
 			}
 		}
 	}
@@ -456,11 +526,49 @@ func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
 	return nil
 }
 
-// generateStableServerName creates a consistent, valid server name from a host.
-func generateStableServerName(host Host) string {
+func generateStableBackendName(app App, proxyPlatform string) string {
+	if proxyPlatform == "nginx" {
+		return generateStableNginxUpstreamName(app)
+	} else if proxyPlatform == "haproxy" {
+		return generateStableHaproxyBackendName(app)
+	}
+	return app.Vhost
+}
+
+// generateStableNginxUpstreamName creates a consistent, valid upstream name from a vhost for nginx. Routing Tag is not supported yet for nginx+.
+func generateStableNginxUpstreamName(app App) string {
+	vhost := app.Vhost
+	return vhost
+}
+
+// generateStableHaproxyBackendName creates a consistent, valid backend name from a vhost and optional routing tag.
+func generateStableHaproxyBackendName(app App) string {
+	vhost := app.Vhost
+	routingTagKey := app.RoutingTagKey
+
+	// Only add suffix if the feature is enabled and a routing tag key is configured.
+	if config.HaproxyBackendIncludeRoutingTagSuffix && routingTagKey != "" {
+		// Look for the routing tag's value in the app's tags.
+		routingTagValue, ok := app.Tags[routingTagKey]
+
+		// If the tag is not present or is an empty string, use the vhost as the routing tag value.
+		if !ok || routingTagValue == "" {
+			routingTagValue = vhost
+		}
+
+		// Append the tag's value to the backend name.
+		return fmt.Sprintf("%s%s%s", vhost, config.HaproxyBackendNameSeparator, routingTagValue)
+	}
+
+	// Fallback to just the vhost if no routing tag is found or configured.
+	return vhost
+}
+
+// generateStableHaproxyServerName creates a consistent, valid server name from a host.
+func generateStableHaproxyServerName(host Host) string {
 	// Replace characters that are invalid in HAProxy server names.
-	sanitizer := strings.NewReplacer(":", "_")
-	return fmt.Sprintf("server_%s_%d", sanitizer.Replace(host.Host), host.Port)
+	sanitizer := strings.NewReplacer(":", config.HaproxyServerNameHostPortSeparator)
+	return fmt.Sprintf("%s_%s_%d", config.HaproxyServerNamePrefix, sanitizer.Replace(host.Host), host.Port)
 }
 
 func nginxPlus(data *RenderingData) error {
@@ -538,12 +646,21 @@ func nginxPlus(data *RenderingData) error {
 			// If upstream has no servers, UpdateHTTPServers returns error as in-line GetHTTPServers returns error. server ID 0 needs to be explicitly initiated by a PATCH
 			err := nginxClient.CheckIfUpstreamExists(upstreamtocheck)
 			if err != nil {
+				nginxAPICallsFailed.WithLabelValues("check_if_upstream_exists").Inc()
+				statsCountVec("nginx_api_calls_failed_total", 1, "check_if_upstream_exists")
 				// First add atleast one server to initialise upstream to support UpdateHTTPServers
 				logger.WithFields(logrus.Fields{
 					"Adding fresh upstream for": upstreamtocheck,
 				}).Info("Adding first server for upstream")
 				//Adding first server for server ID 0. ID 0 needs to be updated if state file is resurrected when a vhost gets resurrected. Create ID 0 otherwise.
 				error := nginxClient.UpdateHTTPServer(upstreamtocheck, finalformattedServers[0])
+				if error != nil {
+					nginxAPICallsFailed.WithLabelValues("update_http_server").Inc()
+					statsCountVec("nginx_api_calls_failed_total", 1, "update_http_server")
+				} else {
+					nginxAPICallsSuccessful.WithLabelValues("update_http_server").Inc()
+					statsCountVec("nginx_api_calls_successful_total", 1, "update_http_server")
+				}
 
 				// Now upstream should have servers, update earlier state to let UpdateHTTPServers take over
 				//But wait from some time for nginx to actually update it's state. Consecutive calls would still return a 404 if you don't wait long enough
@@ -562,12 +679,26 @@ func nginxPlus(data *RenderingData) error {
 							err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
 						}
 					}
+					if err == nil {
+						nginxAPICallsSuccessful.WithLabelValues("check_if_upstream_exists").Inc()
+						statsCountVec("nginx_api_calls_successful_total", 1, "check_if_upstream_exists")
+					}
 					cancel()
 				}
 
 			}
 			if err == nil {
+				nginxAPICallsSuccessful.WithLabelValues("check_if_upstream_exists").Inc()
+				statsCountVec("nginx_api_calls_successful_total", 1, "check_if_upstream_exists")
 				added, deleted, updated, error := nginxClient.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
+
+				if error != nil {
+					nginxAPICallsFailed.WithLabelValues("update_http_servers").Inc()
+					statsCountVec("nginx_api_calls_failed_total", 1, "update_http_servers")
+				} else {
+					nginxAPICallsSuccessful.WithLabelValues("update_http_servers").Inc()
+					statsCountVec("nginx_api_calls_successful_total", 1, "update_http_servers")
+				}
 
 				if added != nil {
 					logger.WithFields(logrus.Fields{
@@ -616,7 +747,7 @@ func checkTmpl() error {
 	}
 	data = RenderingData{}
 	createRenderingData(&data)
-	err = t.Execute(io.Discard, &config)
+	err = t.Execute(io.Discard, &data)
 	if err != nil {
 		return err
 	}

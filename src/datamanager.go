@@ -43,6 +43,7 @@ type DataManager struct {
 	mu                  sync.RWMutex             // Mutex for concurrency control
 	namespaces          map[string]NamespaceData // Map of namespaces to NamespaceData
 	LastKnownVhosts     Vhosts
+	LastKnownBackends   map[string]bool
 	LastReloadTimestamp time.Time // Timestamp of creation or modification
 	StaticData          StaticConfig
 }
@@ -56,7 +57,9 @@ func NewDataManager(inXproxy string, inLeftDelimiter string, inRightDelimiter st
 		namespaces: make(map[string]NamespaceData),
 		StaticData: StaticConfig{Xproxy: inXproxy, LeftDelimiter: inLeftDelimiter, RightDelimiter: inRightDelimiter,
 			MaxFailsUpstream: inMaxFailsUpstream, FailTimeoutUpstream: inFailTimeoutUpstream, SlowStartUpstream: inSlowStartUpstream},
-		LastKnownVhosts: empltyLastKnownVhosts, LastReloadTimestamp: time.Now(),
+		LastKnownVhosts:     empltyLastKnownVhosts,
+		LastKnownBackends:   make(map[string]bool),
+		LastReloadTimestamp: time.Now(),
 	}
 }
 
@@ -119,7 +122,7 @@ func (dm *DataManager) ReadDroveConfig(namespace string) (DroveConfig, error) {
 	logger.WithFields(logrus.Fields{
 		"operation": operation,
 		"namespace": namespace,
-	}).Debug("ReadDroveConfig successfully")
+	}).Trace("ReadDroveConfig successfully")
 
 	return ns.Drove, nil //returning copy
 }
@@ -146,7 +149,7 @@ func (dm *DataManager) ReadLastTimestamp(namespace string) (time.Time, error) {
 		"operation": operation,
 		"namespace": namespace,
 		"Timestamp": ns.Timestamp,
-	}).Debug("ReadLastTimestamps successfully")
+	}).Trace("ReadLastTimestamps successfully")
 
 	return ns.Timestamp, nil //returning copy
 }
@@ -173,7 +176,7 @@ func (dm *DataManager) ReadLeader(namespace string) (LeaderController, error) {
 		"operation": operation,
 		"namespace": namespace,
 		"leader":    ns.Leader,
-	}).Debug("ReadLeader successfully")
+	}).Trace("ReadLeader successfully")
 
 	return ns.Leader, nil //returning copy
 }
@@ -203,7 +206,7 @@ func (dm *DataManager) UpdateLeader(namespace string, leader LeaderController) e
 		"namespace": namespace,
 		"leader":    ns.Leader,
 		"time":      ns.Timestamp,
-	}).Debug("UpdateLeader data finished successfully")
+	}).Trace("UpdateLeader data finished successfully")
 	return nil
 }
 
@@ -229,7 +232,7 @@ func (dm *DataManager) ReadApps(namespace string) (map[string]App, error) {
 		"operation": operation,
 		"namespace": namespace,
 		"apps":      ns.Apps,
-	}).Debug("ReadApp successfully")
+	}).Trace("ReadApp successfully")
 
 	return ns.Apps, nil //returning copy
 }
@@ -259,7 +262,7 @@ func (dm *DataManager) UpdateApps(namespace string, apps map[string]App) error {
 		"namespace": namespace,
 		"apps":      dm.namespaces[namespace].Apps,
 		"time":      dm.namespaces[namespace].Timestamp,
-	}).Debug("UpdateApps finished successfully")
+	}).Trace("UpdateApps finished successfully")
 	return nil
 }
 
@@ -285,7 +288,7 @@ func (dm *DataManager) ReadKnownVhosts(namespace string) (Vhosts, error) {
 		"operation":   operation,
 		"namespace":   namespace,
 		"knownVHosts": ns.KnownVHosts,
-	}).Debug("ReadKnownVhosts successfully")
+	}).Trace("ReadKnownVhosts successfully")
 
 	return ns.KnownVHosts, nil //returning copy
 }
@@ -308,7 +311,7 @@ func (dm *DataManager) ReadAllKnownVhosts() Vhosts {
 	logger.WithFields(logrus.Fields{
 		"operation": operation,
 		"allApps":   allKnownVhosts,
-	}).Debug("ReadAllKnownVhosts successfully")
+	}).Trace("ReadAllKnownVhosts successfully")
 
 	return allKnownVhosts //returning copy
 }
@@ -351,7 +354,7 @@ func (dm *DataManager) ReadLastReloadTimestamp() time.Time {
 	logger.WithFields(logrus.Fields{
 		"operation":           operation,
 		"LastReloadTimestamp": dm.LastReloadTimestamp,
-	}).Debug("ReadLoadedTime successfully")
+	}).Trace("ReadLoadedTime successfully")
 
 	return dm.LastReloadTimestamp //returning copy
 }
@@ -365,7 +368,7 @@ func (dm *DataManager) ReadLastKnownVhosts() Vhosts {
 	logger.WithFields(logrus.Fields{
 		"operation":       operation,
 		"LastKnownVhosts": dm.LastKnownVhosts,
-	}).Debug("LastKnownVhosts successfully")
+	}).Trace("LastKnownVhosts successfully")
 
 	return dm.LastKnownVhosts //returning copy
 }
@@ -385,6 +388,35 @@ func (dm *DataManager) UpdateLastKnownVhosts(inLastKnownVhosts Vhosts) error {
 	return nil
 }
 
+func (dm *DataManager) ReadLastKnownBackends() map[string]bool {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+	operation := "ReadLastKnownBackends"
+
+	// Log success
+	logger.WithFields(logrus.Fields{
+		"operation":         operation,
+		"LastKnownBackends": dm.LastKnownBackends,
+	}).Trace("ReadLastKnownBackends successfully")
+
+	return dm.LastKnownBackends //returning copy
+}
+
+func (dm *DataManager) UpdateLastKnownBackends(inLastKnownBackends map[string]bool) error {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	operation := "UpdateLastKnownBackends"
+
+	dm.LastKnownBackends = inLastKnownBackends
+	dm.LastReloadTimestamp = time.Now()
+
+	logger.WithFields(logrus.Fields{
+		"operation":         operation,
+		"LastKnownBackends": dm.LastKnownBackends,
+	}).Debug("UpdateLastKnownBackends finished successfully")
+	return nil
+}
+
 func (dm *DataManager) ReadAllNamespace() map[string]NamespaceData {
 	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.RUnlock() // Ensure the lock is always released
@@ -393,7 +425,7 @@ func (dm *DataManager) ReadAllNamespace() map[string]NamespaceData {
 	// Start the operation log
 	logger.WithFields(logrus.Fields{
 		"operation": operation,
-	}).Debug("ReadAllNamespace data successfully")
+	}).Trace("ReadAllNamespace data successfully")
 
 	return dm.namespaces //returning copy
 }
@@ -408,7 +440,7 @@ func (dm *DataManager) ReadStaticData() StaticConfig {
 	logger.WithFields(logrus.Fields{
 		"operation":  operation,
 		"staticData": dm.StaticData,
-	}).Debug("ReadStaticData successfully")
+	}).Trace("ReadStaticData successfully")
 
 	return dm.StaticData //returning copy
 }
