@@ -75,9 +75,12 @@ func reload() error {
 		for _, app := range data.Apps {
 			if app.Vhost != "" {
 				var backendName string
-				backendName = generateStableBackendName(app, config.ProxyPlatform)
-				if backendName != "" {
-					currentBackendNames[backendName] = true
+				for groupName, groupData := range app.Groups {
+					logrus.Debug("Group: " + groupName + " Data: " + fmt.Sprintf("%+v", groupData))
+					backendName = generateStableBackendName(app, config.ProxyPlatform, groupName)
+					if backendName != "" {
+						currentBackendNames[backendName] = true
+					}
 				}
 			}
 		}
@@ -106,9 +109,12 @@ func reload() error {
 			for _, app := range data.Apps {
 				if app.Vhost != "" {
 					var backendName string
-					backendName = generateStableBackendName(app, config.ProxyPlatform)
-					if backendName != "" {
-						currentBackendNames[backendName] = true
+					for groupName, groupData := range app.Groups {
+						logrus.Debug("Group: " + groupName + " Data: " + fmt.Sprintf("%+v", groupData))
+						backendName = generateStableBackendName(app, config.ProxyPlatform, groupName)
+						if backendName != "" {
+							currentBackendNames[backendName] = true
+						}
 					}
 				}
 			}
@@ -416,16 +422,18 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 			}).Debug("Skipping app without vhost")
 			continue
 		}
-
-		err := updateHAProxyUpstream(runtimeClient, app)
-		if err != nil {
-			logger.WithFields(logrus.Fields{
-				"app_id":     appID,
-				"vhost":      app.Vhost,
-				"routingTag": app.RoutingTagKey,
-				"error":      err,
-			}).Error("Failed to update HAProxy upstream")
-			// Continue with other apps instead of failing completely
+		for groupName, groupData := range app.Groups {
+			logrus.Debug("Group: " + groupName + " Data: " + fmt.Sprintf("%+v", groupData))
+			err := updateHAProxyUpstream(runtimeClient, app, groupName)
+			if err != nil {
+				logger.WithFields(logrus.Fields{
+					"app_id":     appID,
+					"vhost":      app.Vhost,
+					"routingTag": app.RoutingTagKey,
+					"group":      groupName,
+					"error":      err,
+				}).Error("Failed to update HAProxy upstream")
+			}
 			continue
 		}
 	}
@@ -434,8 +442,8 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 }
 
 // updateHAProxyUpstream reconciles the state of an HAProxy backend with the desired application hosts.
-func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
-	backend := generateStableHaproxyBackendName(app)
+func updateHAProxyUpstream(client runtime_api.Runtime, app App, groupName string) error {
+	backend := generateStableHaproxyBackendName(app, groupName)
 
 	// 1. Get the current state of servers from HAProxy
 	currentServers, err := client.GetServersState(backend)
@@ -457,10 +465,16 @@ func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
 
 	// 2. Build a map of the desired servers from the application data.
 	desiredServerMap := make(map[string]Host)
-	for _, host := range app.Hosts {
-		serverName := generateStableHaproxyServerName(host)
-		desiredServerMap[serverName] = host
+	if groupData, ok := app.Groups[groupName]; ok {
+		for i := range groupData.Hosts {
+			serverName := generateStableHaproxyServerName(groupData.Hosts[i])
+			desiredServerMap[serverName] = groupData.Hosts[i]
+		}
 	}
+	logrus.WithFields(logrus.Fields{
+		"backend":        backend,
+		"desiredservers": desiredServerMap,
+	}).Debug("Desired servers for HAProxy backend")
 
 	// 3. Build a map of current servers for efficient lookup and tracking.
 	currentServerMap := make(map[string]bool)
@@ -529,6 +543,7 @@ func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
 
 	// Delete servers that are no longer in the desired state (and are now in maint).
 	// This requires HAProxy >= 2.0 and a 'server-template' in the backend.
+	currentServers, err = client.GetServersState(backend)
 	for _, srv := range currentServers {
 		if _, exists := desiredServerMap[srv.Name]; !exists {
 			logger.WithFields(logrus.Fields{
@@ -551,37 +566,29 @@ func updateHAProxyUpstream(client runtime_api.Runtime, app App) error {
 	return nil
 }
 
-func generateStableBackendName(app App, proxyPlatform string) string {
+func generateStableBackendName(app App, proxyPlatform string, groupName string) string {
 	if proxyPlatform == "nginx" {
-		return generateStableNginxUpstreamName(app)
+		return generateStableNginxUpstreamName(app, groupName)
 	} else if proxyPlatform == "haproxy" {
-		return generateStableHaproxyBackendName(app)
+		return generateStableHaproxyBackendName(app, groupName)
 	}
 	return app.Vhost
 }
 
 // generateStableNginxUpstreamName creates a consistent, valid upstream name from a vhost for nginx. Routing Tag is not supported yet for nginx+.
-func generateStableNginxUpstreamName(app App) string {
+func generateStableNginxUpstreamName(app App, groupName string) string {
 	vhost := app.Vhost
 	return vhost
 }
 
 // generateStableHaproxyBackendName creates a consistent, valid backend name from a vhost and optional routing tag.
-func generateStableHaproxyBackendName(app App) string {
+func generateStableHaproxyBackendName(app App, groupName string) string {
 	vhost := app.Vhost
 	routingTagKey := app.RoutingTagKey
+	routingTagValue := groupName
 
 	// Only add suffix if the feature is enabled and a routing tag key is configured.
 	if config.HaproxyBackendIncludeRoutingTagSuffix && routingTagKey != "" {
-		// Look for the routing tag's value in the app's tags.
-		routingTagValue, ok := app.Tags[routingTagKey]
-
-		// If the tag is not present or is an empty string, use the vhost as the routing tag value.
-		if !ok || routingTagValue == "" {
-			routingTagValue = vhost
-		}
-
-		// Append the tag's value to the backend name.
 		return fmt.Sprintf("%s%s%s", vhost, config.HaproxyBackendNameSeparator, routingTagValue)
 	}
 
