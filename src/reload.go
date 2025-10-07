@@ -380,7 +380,6 @@ func IsUnixSocketAddr(addr string) bool {
 	return true
 }
 
-// newHAProxyClient initializes and returns a new HAProxy runtime client.
 func newHAProxyClient(ctx context.Context) (runtime_api.Runtime, error) {
 	haproxySocket := config.HaproxySocketAddr
 	logger.WithField("haproxy_socket", haproxySocket).Debug("Preparing to connect to HAProxy runtime API")
@@ -418,7 +417,7 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 		return err
 	}
 
-	// Step 1: Aggregate all hosts for each unique backend.
+	// Aggregate all hosts for each unique backend.
 	// This prevents multiple conflicting updates to the same backend.
 	backendsToReconcile := make(map[string][]Host)
 	for _, app := range data.Apps {
@@ -428,13 +427,12 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 		for groupName, groupData := range app.Groups {
 			backendName := generateStableHaproxyBackendName(app, groupName)
 			if backendName != "" {
-				// Append hosts to the list for this backend.
 				backendsToReconcile[backendName] = append(backendsToReconcile[backendName], groupData.Hosts...)
 			}
 		}
 	}
 
-	// Step 2: Reconcile each unique backend.
+	// Reconcile each unique backend.
 	logger.WithField("count", len(backendsToReconcile)).Debug("Reconciling all unique HAProxy backends")
 	for backend, hosts := range backendsToReconcile {
 		if err := reconcileHAProxyBackend(runtimeClient, backend, hosts); err != nil {
@@ -449,11 +447,9 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 	return nil
 }
 
-// reconcileHAProxyBackend ensures the servers in an HAProxy backend match the desired hosts.
 func reconcileHAProxyBackend(client runtime_api.Runtime, backend string, desiredHosts []Host) error {
 	logger.WithField("backend", backend).Debug("Reconciling HAProxy backend")
 
-	// Step 1: Get the current state of servers from HAProxy.
 	currentServers, err := client.GetServersState(backend)
 	if err != nil {
 		// This is not a failure of the API call itself, but the backend may not exist in the config.
@@ -464,14 +460,11 @@ func reconcileHAProxyBackend(client runtime_api.Runtime, backend string, desired
 	haproxyAPICallsSuccessful.WithLabelValues("get_servers_state").Inc()
 	statsCountVec("haproxy_api_calls_successful_total", 1, "get_servers_state")
 
-	// Step 2: Build maps for efficient comparison. This also handles deduplication.
 	desiredServerMap := haproxyBuildDesiredServerMap(desiredHosts)
 	currentServerMap := haproxyBuildCurrentServerMap(currentServers)
 
-	// Step 3: Remove stale servers that are in HAProxy but not in the desired state.
 	haproxyRemoveStaleServers(client, backend, currentServers, desiredServerMap)
 
-	// Step 4: Add new servers or update existing ones to match the desired state.
 	haproxyAddOrUpdateServers(client, backend, desiredServerMap, currentServerMap)
 
 	logger.WithField("backend", backend).Debug("Successfully reconciled HAProxy backend")
@@ -482,7 +475,7 @@ func haproxyBuildDesiredServerMap(desiredHosts []Host) map[string]Host {
 	serverMap := make(map[string]Host)
 	for _, host := range desiredHosts {
 		serverName := generateStableHaproxyServerName(host)
-		serverMap[serverName] = host // Using a map automatically handles deduplication.
+		serverMap[serverName] = host
 	}
 	return serverMap
 }
@@ -621,13 +614,13 @@ func generateStableBackendName(app App, proxyPlatform string, groupName string) 
 	return app.Vhost
 }
 
-// generateStableNginxUpstreamName creates a consistent, valid upstream name from a vhost for nginx. Routing Tag is not supported yet for nginx+.
+// generateStableNginxUpstreamName creates a valid upstream name from a vhost for nginx. Routing Tag is not supported yet for nginx+.
 func generateStableNginxUpstreamName(app App, groupName string) string {
 	vhost := app.Vhost
 	return vhost
 }
 
-// generateStableHaproxyBackendName creates a consistent, valid backend name from a vhost and optional routing tag.
+// generateStableHaproxyBackendName creates a valid and unique backend name from a vhost and optional routing tag.
 func generateStableHaproxyBackendName(app App, groupName string) string {
 	vhost := app.Vhost
 	routingTagKey := app.RoutingTagKey
@@ -642,7 +635,7 @@ func generateStableHaproxyBackendName(app App, groupName string) string {
 	return vhost
 }
 
-// generateStableHaproxyServerName creates a consistent, valid unique server name from a host.
+// generateStableHaproxyServerName creates a valid and unique server name from a host.
 func generateStableHaproxyServerName(host Host) string {
 	// Replace characters that are invalid in HAProxy server names.
 	sanitizer := strings.NewReplacer(":", config.HaproxyServerNameHostPortSeparator)
