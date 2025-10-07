@@ -311,6 +311,9 @@ func setupPollEvents() {
 }
 
 func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
+	health.Lock()
+	defer health.Unlock()
+
 	healthyCount := 0
 	configuredCount := len(health.NamespaceEndpoints[namespace])
 
@@ -368,6 +371,20 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 			"namespace": namespace,
 		}).Trace(" Endpoint is healthy")
 	}
+
+	// Set the overall health status for the namespace
+	nsHealth := health.NamespaceHealth[namespace]
+	if healthyCount == configuredCount {
+		nsHealth.Healthy = true
+		nsHealth.Message = "All endpoints are healthy"
+	} else if healthyCount > 0 {
+		nsHealth.Healthy = true // Still considered healthy if at least one endpoint is up
+		nsHealth.Message = fmt.Sprintf("%d out of %d endpoints are healthy", healthyCount, configuredCount)
+	} else {
+		nsHealth.Healthy = false
+		nsHealth.Message = "All endpoints are down"
+	}
+	health.NamespaceHealth[namespace] = nsHealth
 
 	gaugeConfiguredEndpoints.WithLabelValues(namespace).Set(float64(configuredCount))
 	gaugeHealthyEndpoints.WithLabelValues(namespace).Set(float64(healthyCount))

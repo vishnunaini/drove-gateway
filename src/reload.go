@@ -63,6 +63,12 @@ func reload() error {
 
 	if !upstreamUpdateAPIEnabled {
 		logger.Debug("Runtime API calls to update upstreams are disabled")
+
+		health.Lock()
+		health.UpstreamUpdatesViaAPI.Healthy = true
+		health.UpstreamUpdatesViaAPI.Message = "OK: Not in use, full reloads are enabled"
+		health.Unlock()
+
 		// Any use of runtime API is disabled, so we must perform a full reload.
 		// We still need to calculate backend names to update the database.
 		currentBackendNames := make(map[string]bool)
@@ -141,13 +147,22 @@ func reload() error {
 			defer cancel()
 			err = haproxyRuntimeAPI(&data, ctx)
 		}
+
+		// Update health status based on the result of the API call
+		health.Lock()
 		if err != nil {
+			health.UpstreamUpdatesViaAPI.Healthy = false
+			health.UpstreamUpdatesViaAPI.Message = err.Error()
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to update upstreams via " + config.ProxyPlatform + " api")
 			go statsCount("reload.failed", 1)
 			go countFailedReloads.Inc()
+		} else {
+			health.UpstreamUpdatesViaAPI.Healthy = true
+			health.UpstreamUpdatesViaAPI.Message = "OK"
 		}
+		health.Unlock()
 	}
 	if err != nil {
 		logger.WithFields(logrus.Fields{
@@ -323,10 +338,20 @@ func writeConf(data *RenderingData) error {
 	}
 	config.LastUpdates.LastConfigRendered = time.Now()
 	err = checkConf(tmpFile.Name())
+	health.Lock()
 	if err != nil {
+		health.Config.Healthy = false
+		health.Config.Message = err.Error()
 		logger.Error("Error in config generated")
+	} else {
+		health.Config.Healthy = true
+		health.Config.Message = "OK"
+	}
+	health.Unlock()
+	if err != nil {
 		return err
 	}
+
 	logger.WithFields(logrus.Fields{
 		"file": ConfigPath,
 	}).Info("Writing new config")
@@ -733,7 +758,6 @@ func nginxPlus(data *RenderingData) error {
 		}
 	}
 	return nil
-
 }
 
 func checkTmpl() error {
@@ -742,16 +766,22 @@ func checkTmpl() error {
 	data := RenderingData{}
 	createRenderingData(&data)
 	t, err := getTmpl(TemplatePath)
+	health.Lock()
 	if err != nil {
-		return err
+		health.Template.Healthy = false
+		health.Template.Message = err.Error()
+	} else {
+		err = t.Execute(io.Discard, &data)
+		if err != nil {
+			health.Template.Healthy = false
+			health.Template.Message = err.Error()
+		} else {
+			health.Template.Healthy = true
+			health.Template.Message = "OK"
+		}
 	}
-	data = RenderingData{}
-	createRenderingData(&data)
-	err = t.Execute(io.Discard, &data)
-	if err != nil {
-		return err
-	}
-	return nil
+	health.Unlock()
+	return err
 }
 
 func getTmpl(proxyTemplatePath string) (*template.Template, error) {
