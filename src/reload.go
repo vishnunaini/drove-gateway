@@ -463,9 +463,9 @@ func reconcileHAProxyBackend(client runtime_api.Runtime, backend string, desired
 	desiredServerMap := haproxyBuildDesiredServerMap(desiredHosts)
 	currentServerMap := haproxyBuildCurrentServerMap(currentServers)
 
-	haproxyRemoveStaleServers(client, backend, currentServers, desiredServerMap)
-
 	haproxyAddOrUpdateServers(client, backend, desiredServerMap, currentServerMap)
+	//add or update servers first to avoid downtime in case of complete replacement of servers
+	haproxyRemoveStaleServers(client, backend, currentServers, desiredServerMap)
 
 	logger.WithField("backend", backend).Debug("Successfully reconciled HAProxy backend")
 	return nil
