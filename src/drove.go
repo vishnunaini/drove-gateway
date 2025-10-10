@@ -467,6 +467,8 @@ func matchingVhost(vHost string, realms []string) bool {
 	return false
 }
 
+// vhosts should be case insensitive as per standards. altough nginx is case insetive, some other proxies like haproxy are not as they expect upstreams to handle it.
+// Also ensure routing tag values are grouped case insensitively.
 func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vhosts) bool {
 	config.Lock()
 	defer config.Unlock()
@@ -476,7 +478,6 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 		realms = strings.Split(droveConfig.Realm, ",")
 	}
 
-	// Slices for cumulative logging of routing tags
 	var appsWithRoutingTag []string
 	var appsWithoutRoutingTag []string
 	var hostsIgnoredByRealm []string
