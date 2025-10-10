@@ -290,7 +290,7 @@ func setupDefaultConfig() {
 			config.HaproxyServerNamePrefix = "server"
 		}
 		if config.HaproxyBackendIncludeRoutingTagSuffix {
-			logger.Infof("Haproxy backend names will include routing tag suffix")
+			logger.Info("Haproxy backend names will include routing tag suffix")
 		}
 		if config.HaproxyServerNameHostPortSeparator == "" {
 			config.HaproxyServerNameHostPortSeparator = "_"

@@ -404,7 +404,7 @@ func newHAProxyClient(ctx context.Context) (runtime_api.Runtime, error) {
 		return nil, fmt.Errorf("error connecting to HAProxy socket: %w", err)
 	}
 
-	logger.Debug("Successfully connected to HAProxy runtime API")
+	logger.Info("Successfully connected to HAProxy runtime API")
 	return runtimeClient, nil
 }
 
@@ -417,8 +417,7 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 		return err
 	}
 
-	// Aggregate all hosts for each unique backend.
-	// This prevents multiple conflicting updates to the same backend.
+	// Aggregate all desired hosts for each unique backend from our configuration. We don't want to make excess API calls
 	backendsToReconcile := make(map[string][]Host)
 	for _, app := range data.Apps {
 		if app.Vhost == "" {
@@ -432,10 +431,26 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 		}
 	}
 
-	// Reconcile each unique backend.
+	// Reconcile each unique backend. GetServersState can only be called once per backend. Runtime API library doesn't return backend names
+	// when calling GetServersState as models.RuntimeServers is a list of []*RuntimeServer without backend context returned by models.ParseRuntimeServer()
 	logger.WithField("count", len(backendsToReconcile)).Debug("Reconciling all unique HAProxy backends")
 	for backend, hosts := range backendsToReconcile {
-		if err := reconcileHAProxyBackend(runtimeClient, backend, hosts); err != nil {
+		// Fetch servers for the specific backend.
+		currentServersForBackend, err := runtimeClient.GetServersState(backend)
+		if err != nil {
+			// This error is often not fatal; it can mean the backend doesn't exist yet.
+			logger.WithFields(logrus.Fields{
+				"backend": backend,
+				"error":   err,
+			}).Warning("Could not get servers for backend, it may be new. Proceeding with reconciliation.")
+			// Pass an empty slice so reconciliation can proceed to add servers.
+			currentServersForBackend = []*runtime_models.RuntimeServer{}
+		} else {
+			haproxyAPICallsSuccessful.WithLabelValues("get_servers_state").Inc()
+			statsCountVec("haproxy_api_calls_successful_total", 1, "get_servers_state")
+		}
+
+		if err := reconcileHAProxyBackend(runtimeClient, backend, hosts, currentServersForBackend); err != nil {
 			logger.WithFields(logrus.Fields{
 				"backend": backend,
 				"error":   err,
@@ -443,32 +458,62 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 			// Continue with other backends instead of failing completely
 		}
 	}
+	logger.Info("Successfully reconciled all HAProxy backends")
 
 	return nil
 }
 
-func reconcileHAProxyBackend(client runtime_api.Runtime, backend string, desiredHosts []Host) error {
+func reconcileHAProxyBackend(client runtime_api.Runtime, backend string, desiredHosts []Host, currentServers []*runtime_models.RuntimeServer) error {
 	logger.WithField("backend", backend).Debug("Reconciling HAProxy backend")
-
-	currentServers, err := client.GetServersState(backend)
-	if err != nil {
-		// This is not a failure of the API call itself, but the backend may not exist in the config.
-		logger.WithFields(logrus.Fields{"backend": backend, "error": err}).
-			Warning("Cannot get servers for backend, it may not exist in the config. Skipping.")
-		return nil
-	}
-	haproxyAPICallsSuccessful.WithLabelValues("get_servers_state").Inc()
-	statsCountVec("haproxy_api_calls_successful_total", 1, "get_servers_state")
 
 	desiredServerMap := haproxyBuildDesiredServerMap(desiredHosts)
 	currentServerMap := haproxyBuildCurrentServerMap(currentServers)
+
+	if haproxyAreServerMapsIdentical(desiredServerMap, currentServerMap) {
+		logger.WithField("backend", backend).Debug("HAProxy backend is already in the desired state. No changes needed.")
+		return nil
+	}
 
 	haproxyAddOrUpdateServers(client, backend, desiredServerMap, currentServerMap)
 	//add or update servers first to avoid downtime in case of complete replacement of servers
 	haproxyRemoveStaleServers(client, backend, currentServers, desiredServerMap)
 
-	logger.WithField("backend", backend).Debug("Successfully reconciled HAProxy backend")
+	logger.WithField("backend", backend).Info("Successfully reconciled HAProxy backend")
 	return nil
+}
+
+func haproxyAreServerMapsIdentical(desiredMap map[string]Host, currentMap map[string]runtime_models.RuntimeServer) bool {
+	if len(desiredMap) != len(currentMap) {
+		return false
+	}
+
+	for serverName, desiredHost := range desiredMap {
+		currentServer, exists := currentMap[serverName]
+		if !exists {
+			return false
+		}
+
+		// Resolve desired hostname to IP for a reliable comparison with HAProxy's runtime state.
+		desiredIP := desiredHost.Host // Default to hostname if resolution fails.
+		resolveCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if resolvedIP, err := haproxyResolveHostnameToIP(resolveCtx, desiredHost.Host); err == nil {
+			desiredIP = resolvedIP
+		}
+
+		portMatches := currentServer.Port != nil && *currentServer.Port == int64(desiredHost.Port)
+		addressMatches := currentServer.Address == desiredIP
+		adminStateMatches := currentServer.AdminState == "ready"
+		// We only check for 'up' or 'maint' as operational state can fluctuate (e.g., 'going down').
+		// A server in 'maint' is operationally down but administratively configured, so we consider it a match if we want it 'up'.
+		opStateMatches := currentServer.OperationalState == "up" || currentServer.OperationalState == "maint"
+
+		if !(portMatches && addressMatches && adminStateMatches && opStateMatches) {
+			return false // Properties do not match.
+		}
+	}
+
+	return true
 }
 
 func haproxyBuildDesiredServerMap(desiredHosts []Host) map[string]Host {
