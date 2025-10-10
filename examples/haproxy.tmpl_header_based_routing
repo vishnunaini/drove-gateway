@@ -50,7 +50,7 @@ frontend stats
     stats hide-version
     stats refresh 2s
 
-frontend https_in from nixy_defaults
+frontend https_in
   mode http
   bind :80
 
@@ -89,7 +89,7 @@ frontend https_in from nixy_defaults
 
 {{- range $id, $app := .Apps}}
  {{- range $gid, $hostgrp := .Groups}}
-backend {{$id}}_{{$gid}} from nixy_defaults
+backend {{$id}}_{{$gid}}
   mode http
   balance roundrobin
   http-request replace-header Host .* {{$app.Vhost}}

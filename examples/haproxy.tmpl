@@ -17,7 +17,7 @@ global
   # server-state-file /var/lib/haproxy/server-state
   #systemd ExecReload can be used to write and load server state file if using server-template's
 
-defaults proxy_defaults
+defaults
   mode http
   log global
   option httplog
@@ -40,7 +40,7 @@ defaults proxy_defaults
   errorfile 504 /etc/haproxy/errors/504.http
   # load-server-state-from-file global
 
-frontend https_in from nixy_defaults
+frontend https_in
   mode http
   bind :80
 
@@ -58,7 +58,7 @@ frontend https_in from nixy_defaults
 #unlike nginx, haproxy doesn't hide special headers like X-Accel-Buffering, Cache-Control, no action required
 #for proxy_buffering_off, haproxy has deprecated option http-tunnel, no action required
 {{- range $id, $app := .Apps}}
-backend {{$app.Vhost}} from nixy_defaults
+backend {{$app.Vhost}}
   mode http
   balance roundrobin
   http-request replace-header Host .* {{$app.Vhost}}
@@ -73,6 +73,6 @@ backend {{$app.Vhost}} from nixy_defaults
   {{- end}}
 {{- end}}
 
-backend no-match from nixy_defaults
+backend no-match
   mode http
   http-request deny deny_status 404
