@@ -612,7 +612,7 @@ func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName
 		"backend":           backend,
 		"server":            serverName,
 		"current_address":   currentServer.Address,
-		"current_port":      currentServer.Port,
+		"current_port":      *currentServer.Port,
 		"current_admin":     currentServer.AdminState,
 		"current_operstate": currentServer.OperationalState,
 		"desired_address":   desiredIP,
