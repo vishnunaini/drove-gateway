@@ -504,7 +504,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 					if tagValue, ok := app.Tags[droveConfig.RoutingTag]; ok && tagValue != "" {
 						// Collect apps that have the routing tag
 						appsWithRoutingTag = append(appsWithRoutingTag, fmt.Sprintf("%s (value: %s)", newapp.Vhost, tagValue))
-						groupName = tagValue
+						groupName = strings.ToLower(tagValue)
 					} else {
 						// Collect apps that are missing the routing tag
 						appsWithoutRoutingTag = append(appsWithoutRoutingTag, newapp.Vhost)
