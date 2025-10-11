@@ -186,6 +186,14 @@ func newHealth() *Health {
 		Healthy: false,
 		Message: "pending first check",
 	}
+	h.Config = Status{
+		Healthy: false,
+		Message: "pending first check",
+	}
+	h.Template = Status{
+		Healthy: false,
+		Message: "pending first check",
+	}
 	for _, nsConfig := range config.DroveNamespaces {
 		e := []EndpointStatus{}
 		for _, ep := range nsConfig.Drove {
