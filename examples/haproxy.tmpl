@@ -64,11 +64,14 @@ backend {{$app.Vhost}}
   http-request replace-header Host .* {{$app.Vhost}}
 
   {{- range $app.Hosts}}
-  {{- $ptype_map := index $app.Hosts 0}}
-  {{- if eq $ptype_map.PortType "https"}}
+  {{- if eq .PortType "https"}}
   server server_{{ .Host }}_{{ .Port }} {{ .Host }}:{{ .Port }} ssl verify required ca-file ca-certificates.crt
-  {{- else}}
+  {{- else if eq .PortType "http"}}
   server server_{{ .Host }}_{{ .Port }} {{ .Host }}:{{ .Port }}
+  {{- else if eq .PortType "tcp"}}
+  #skipped plain tcp upstream server_{{ .Host }}_{{ .Port }}
+  {{- else if eq .PortType "udp"}}
+  #skipped plain udp upstream server_{{ .Host }}_{{ .Port }}
   {{- end}}
   {{- end}}
 {{- end}}
