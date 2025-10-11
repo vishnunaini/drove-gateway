@@ -157,20 +157,16 @@ func reload() error {
 		}
 
 		// Update health status based on the result of the API call
-		health.Lock()
 		if err != nil {
-			health.UpstreamUpdatesViaAPI.Healthy = false
-			health.UpstreamUpdatesViaAPI.Message = err.Error()
+			updateHealthForUpstreamUpdateAPI(false, err.Error())
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to update upstreams via " + config.ProxyPlatform + " api")
 			go statsCount("reload.failed", 1)
 			go countFailedReloads.Inc()
 		} else {
-			health.UpstreamUpdatesViaAPI.Healthy = true
-			health.UpstreamUpdatesViaAPI.Message = "OK"
+			updateHealthForUpstreamUpdateAPI(true, "OK")
 		}
-		health.Unlock()
 	}
 	if err != nil {
 		logger.WithFields(logrus.Fields{
@@ -186,6 +182,13 @@ func reload() error {
 	}).Debug("reload worker completed")
 	return nil
 
+}
+
+func updateHealthForUpstreamUpdateAPI(status bool, message string) {
+	health.Lock()
+	health.UpstreamUpdatesViaAPI.Healthy = status
+	health.UpstreamUpdatesViaAPI.Message = message
+	health.Unlock()
 }
 
 func updateWithoutReloadConfig(data *RenderingData) error {
@@ -383,19 +386,6 @@ func IsUnixSocketAddr(addr string) bool {
 	return true
 }
 
-var (
-	haproxyClient     runtime_api.Runtime
-	haproxyClientOnce sync.Once
-	haproxyClientErr  error
-)
-
-func getHAProxyClient(ctx context.Context) (runtime_api.Runtime, error) {
-	haproxyClientOnce.Do(func() {
-		haproxyClient, haproxyClientErr = newHAProxyClient(ctx)
-	})
-	return haproxyClient, haproxyClientErr
-}
-
 func newHAProxyClient(ctx context.Context) (runtime_api.Runtime, error) {
 	haproxySocket := config.HaproxySocketAddr
 	logger.WithField("haproxy_socket", haproxySocket).Debug("Preparing to connect to HAProxy runtime API")
@@ -437,8 +427,9 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 	config.RLock()
 	defer config.RUnlock()
 
-	runtimeClient, err := getHAProxyClient(ctx)
+	runtimeClient, err := newHAProxyClient(ctx)
 	if err != nil {
+		updateHealthForUpstreamUpdateAPI(false, err.Error())
 		return err
 	}
 
@@ -469,15 +460,20 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 	// Reconcile each unique backend. GetServersState can only be called once per backend. Runtime API library doesn't return backend names
 	// when calling GetServersState as models.RuntimeServers is a list of []*RuntimeServer without backend context returned by models.ParseRuntimeServer()
 	logger.WithField("count", len(backendsToReconcile)).Debug("Reconciling all unique HAProxy backends")
+	reconciledBackends := make(map[string]bool)
+	reconciliationFailedBackends := make(map[string]bool)
 	for backend, hosts := range backendsToReconcile {
 		// Fetch servers for the specific backend.
 		currentServersForBackend, err := runtimeClient.GetServersState(backend)
 		if err != nil {
+			reconciliationFailedBackends[backend] = true
 			// This error is often not fatal; it can mean the backend doesn't exist yet.
 			logger.WithFields(logrus.Fields{
 				"backend": backend,
 				"error":   err,
 			}).Warning("Could not get servers for backend, it may be new. Proceeding with reconciliation.")
+			haproxyAPICallsFailed.WithLabelValues("get_servers_state").Inc()
+			statsCountVec("haproxy_api_calls_failed_total", 1, "get_servers_state")
 			// Pass an empty slice so reconciliation can proceed to add servers.
 			currentServersForBackend = []*runtime_models.RuntimeServer{}
 		} else {
@@ -486,14 +482,26 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 		}
 
 		if err := reconcileHAProxyBackend(runtimeClient, backend, hosts, currentServersForBackend); err != nil {
+			reconciliationFailedBackends[backend] = true
 			logger.WithFields(logrus.Fields{
 				"backend": backend,
 				"error":   err,
 			}).Error("Failed to reconcile HAProxy backend")
 			// Continue with other backends instead of failing completely
+		} else {
+			reconciledBackends[backend] = true
 		}
 	}
+	if len(reconciliationFailedBackends) > 0 {
+		logger.WithField("failed_backends", reconciliationFailedBackends).Error("Failed to reconcile some HAProxy backends")
+		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile some HAProxy backends: "+fmt.Sprintf("%v", reconciliationFailedBackends)).Error())
+	}
+	if len(reconciledBackends) == 0 {
+		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile any HAProxy backends").Error())
+		return errors.New("failed to reconcile any HAProxy backends")
+	}
 	logger.Info("Successfully reconciled all HAProxy backends")
+	updateHealthForUpstreamUpdateAPI(true, "OK")
 
 	return nil
 }
@@ -568,7 +576,8 @@ func haproxyBuildCurrentServerMap(currentServers []*runtime_models.RuntimeServer
 	return serverMap
 }
 
-func haproxyRemoveStaleServers(client runtime_api.Runtime, backend string, currentServers []*runtime_models.RuntimeServer, desiredServerMap map[string]Host) {
+func haproxyRemoveStaleServers(client runtime_api.Runtime, backend string, currentServers []*runtime_models.RuntimeServer, desiredServerMap map[string]Host) error {
+	var errs []string
 	for _, srv := range currentServers {
 		if _, exists := desiredServerMap[srv.Name]; !exists {
 			logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name}).Info("Disabling and deleting stale server")
@@ -577,6 +586,7 @@ func haproxyRemoveStaleServers(client runtime_api.Runtime, backend string, curre
 				haproxyAPICallsFailed.WithLabelValues("set_server_state_maint").Inc()
 				statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_state_maint")
 				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to disable server")
+				errs = append(errs, fmt.Sprintf("disable %s: %v", srv.Name, err))
 			} else {
 				haproxyAPICallsSuccessful.WithLabelValues("set_server_state_maint").Inc()
 				statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_state_maint")
@@ -586,31 +596,45 @@ func haproxyRemoveStaleServers(client runtime_api.Runtime, backend string, curre
 				haproxyAPICallsFailed.WithLabelValues("delete_server").Inc()
 				statsCountVec("haproxy_api_calls_failed_total", 1, "delete_server")
 				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to delete server")
+				errs = append(errs, fmt.Sprintf("delete %s: %v", srv.Name, err))
 			} else {
 				haproxyAPICallsSuccessful.WithLabelValues("delete_server").Inc()
 				statsCountVec("haproxy_api_calls_successful_total", 1, "delete_server")
 			}
 		}
 	}
+	if len(errs) > 0 {
+		return fmt.Errorf("Errors disabling stale servers: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }
 
-func haproxyAddOrUpdateServers(client runtime_api.Runtime, backend string, desiredServerMap map[string]Host, currentServerMap map[string]runtime_models.RuntimeServer) {
+func haproxyAddOrUpdateServers(client runtime_api.Runtime, backend string, desiredServerMap map[string]Host, currentServerMap map[string]runtime_models.RuntimeServer) error {
+	var errs []string
 	for serverName, host := range desiredServerMap {
 		if _, exists := currentServerMap[serverName]; !exists {
-			haproxyAddNewServer(client, backend, serverName, host)
+			if err := haproxyAddNewServer(client, backend, serverName, host); err != nil {
+				errs = append(errs, fmt.Sprintf("add %s: %v", serverName, err))
+			}
 		} else {
-			haproxyUpdateExistingServer(client, backend, serverName, host, currentServerMap[serverName])
+			if err := haproxyUpdateExistingServer(client, backend, serverName, host, currentServerMap[serverName]); err != nil {
+				errs = append(errs, fmt.Sprintf("update %s: %v", serverName, err))
+			}
 		}
 	}
+	if len(errs) > 0 {
+		return fmt.Errorf("Errors in Add/Update servers: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }
 
-func haproxyAddNewServer(client runtime_api.Runtime, backend, serverName string, host Host) {
+func haproxyAddNewServer(client runtime_api.Runtime, backend, serverName string, host Host) error {
 	logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Info("Adding new server")
 	if err := client.AddServer(backend, serverName, fmt.Sprintf("%s:%d", host.Host, host.Port)); err != nil {
 		haproxyAPICallsFailed.WithLabelValues("add_server").Inc()
 		statsCountVec("haproxy_api_calls_failed_total", 1, "add_server")
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")
-		return
+		return err
 	}
 	haproxyAPICallsSuccessful.WithLabelValues("add_server").Inc()
 	statsCountVec("haproxy_api_calls_successful_total", 1, "add_server")
@@ -619,13 +643,14 @@ func haproxyAddNewServer(client runtime_api.Runtime, backend, serverName string,
 		haproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
 		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_state_ready")
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set new server state to ready")
-	} else {
-		haproxyAPICallsSuccessful.WithLabelValues("set_server_state_ready").Inc()
-		statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_state_ready")
+		return err
 	}
+	haproxyAPICallsSuccessful.WithLabelValues("set_server_state_ready").Inc()
+	statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_state_ready")
+	return nil
 }
 
-func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName string, host Host, currentServer runtime_models.RuntimeServer) {
+func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName string, host Host, currentServer runtime_models.RuntimeServer) error {
 	// Resolve desired hostname to IP for a comparison with HAProxy's runtime state.
 	desiredIP := host.Host // Default to hostname if resolution fails. This will help a force update even if resolution is unavailable.
 	resolveCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -636,11 +661,10 @@ func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName
 		desiredIP = resolvedIP
 	}
 
-	// Check if the server is already in the desired state.
 	portMatches := currentServer.Port != nil && *currentServer.Port == int64(host.Port)
 	if currentServer.Address == desiredIP && portMatches && currentServer.AdminState == "ready" && currentServer.OperationalState == "up" {
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Trace("Server is up-to-date, no update needed")
-		return
+		return nil
 	}
 
 	logger.WithFields(logrus.Fields{
@@ -654,10 +678,13 @@ func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName
 		"desired_port":      host.Port,
 	}).Info("Updating existing server")
 
+	var errs []string
+
 	if err := client.SetServerAddr(backend, serverName, desiredIP, int(host.Port)); err != nil {
 		haproxyAPICallsFailed.WithLabelValues("set_server_addr").Inc()
 		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_addr")
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server address")
+		errs = append(errs, fmt.Sprintf("set address: %v", err))
 	} else {
 		haproxyAPICallsSuccessful.WithLabelValues("set_server_addr").Inc()
 		statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_addr")
@@ -667,10 +694,16 @@ func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName
 		haproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
 		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_state_ready")
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server state to ready")
+		errs = append(errs, fmt.Sprintf("set state: %v", err))
 	} else {
 		haproxyAPICallsSuccessful.WithLabelValues("set_server_state_ready").Inc()
 		statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_state_ready")
 	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("haproxyUpdateExistingServer errors: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 func resolveHostnameToIP(ctx context.Context, hostname string) (string, error) {
