@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sync"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -396,24 +397,33 @@ func checkTmpl() error {
 	return nil
 }
 
+var tmplCache *template.Template
+var tmplCacheErr error
+var tmplCacheOnce sync.Once
+
 func getTmpl() (*template.Template, error) {
-	logger.WithFields(logrus.Fields{
-		"file": config.NginxTemplate,
-	}).Info("Reading template")
-	return template.New(filepath.Base(config.NginxTemplate)).
-		Delims(config.LeftDelimiter, config.RightDelimiter).
-		Funcs(template.FuncMap{
-			"hasPrefix": strings.HasPrefix,
-			"hasSuffix": strings.HasPrefix,
-			"contains":  strings.Contains,
-			"split":     strings.Split,
-			"join":      strings.Join,
-			"trim":      strings.Trim,
-			"replace":   strings.Replace,
-			"tolower":   strings.ToLower,
-			"getenv":    os.Getenv,
-			"datetime":  time.Now}).
-		ParseFiles(config.NginxTemplate)
+	TemplatePath := config.NginxTemplate
+	tmplCacheOnce.Do(func() {
+		logger.WithFields(logrus.Fields{
+			"file": TemplatePath,
+		}).Info("Reading template")
+		tmplCache, tmplCacheErr = template.New(filepath.Base(TemplatePath)).
+			Delims(config.LeftDelimiter, config.RightDelimiter).
+			Funcs(template.FuncMap{
+				"hasPrefix": strings.HasPrefix,
+				"hasSuffix": strings.HasPrefix,
+				"contains":  strings.Contains,
+				"split":     strings.Split,
+				"join":      strings.Join,
+				"trim":      strings.Trim,
+				"replace":   strings.Replace,
+				"tolower":   strings.ToLower,
+				"getenv":    os.Getenv,
+				"datetime":  time.Now,
+			}).
+			ParseFiles(TemplatePath)
+	})
+	return tmplCache, tmplCacheErr
 }
 
 func checkConf(path string) error {
