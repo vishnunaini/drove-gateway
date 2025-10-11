@@ -778,10 +778,13 @@ func nginxPlus(data *RenderingData) error {
 		logger.WithFields(logrus.Fields{
 			"error": error,
 		}).Error("unable to make call to nginx plus")
+		updateHealthForUpstreamUpdateAPI(false, error.Error())
 		return error
 	}
 
 	logger.WithFields(logrus.Fields{"apps": data.Apps}).Debug("Updating upstreams for the whitelisted http/s drove vhosts")
+	reconciledApps := make(map[string]bool)
+	reconciliationFailedApps := make(map[string]bool)
 	for _, app := range data.Apps {
 		//Ensure UpdateHTTPServers is not called for streams TCP/UDP instances
 		isHTTPVHost := isHTTPHostGroup(app.Hosts)
@@ -791,15 +794,18 @@ func nginxPlus(data *RenderingData) error {
 			for _, t := range app.Hosts {
 				if (string(t.PortType) == "http") || (string(t.PortType) == "https") {
 					var hostAndPortMapping string
-					ipRecords, error := net.LookupHost(string(t.Host))
+					ctxDns, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					ipRecord, error := resolveHostnameToIP(ctxDns, string(t.Host))
+					cancel()
 					if error != nil {
 						logger.WithFields(logrus.Fields{
 							"error":    error,
 							"hostname": t.Host,
 						}).Error("dns lookup failed !! skipping the hostname")
+						reconciliationFailedApps[app.Vhost] = true
+						updateHealthForUpstreamUpdateAPI(false, error.Error())
 						continue
 					}
-					ipRecord := ipRecords[0]
 					hostAndPortMapping = ipRecord + ":" + fmt.Sprint(t.Port)
 					newFormattedServers = append(newFormattedServers, hostAndPortMapping)
 				}
@@ -846,12 +852,14 @@ func nginxPlus(data *RenderingData) error {
 					ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 					defer cancel()
 					err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
+				waitLoop:
 					for err != nil {
 						select {
 						case <-ctx.Done():
-							logger.WithFields(logrus.Fields{
-								"Adding fresh upstream for": upstreamtocheck,
-							}).Error("Context timeout waiting for CheckIfUpstreamExists")
+							err = fmt.Errorf("context timeout waiting for upstream '%s' to exist", upstreamtocheck)
+							logger.WithError(err).Error("Failed to confirm upstream creation")
+							updateHealthForUpstreamUpdateAPI(false, err.Error())
+							break waitLoop
 						default:
 							time.Sleep(5 * time.Millisecond)
 							err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
@@ -861,7 +869,6 @@ func nginxPlus(data *RenderingData) error {
 						nginxAPICallsSuccessful.WithLabelValues("check_if_upstream_exists").Inc()
 						statsCountVec("nginx_api_calls_successful_total", 1, "check_if_upstream_exists")
 					}
-					cancel()
 				}
 
 			}
@@ -904,12 +911,29 @@ func nginxPlus(data *RenderingData) error {
 					return error
 				}
 			} else {
+				reconciliationFailedApps[app.Vhost] = true
+				logger.WithFields(logrus.Fields{
+					"vhost": app.Vhost,
+					"error": err,
+				}).Error("unable to check if upstream exists in nginx plus")
+				updateHealthForUpstreamUpdateAPI(false, err.Error())
 				return err
 			}
 		} else {
 			logger.WithFields(logrus.Fields{"vhost": app.Vhost}).Debug("Skipping non-HTTP/S vhost update")
 		}
+		reconciledApps[app.Vhost] = true
 	}
+	if len(reconciliationFailedApps) > 0 {
+		logger.WithField("failed_apps", reconciliationFailedApps).Error("Failed to reconcile some nginx plus vhosts")
+		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile some nginx plus vhosts: "+fmt.Sprintf("%v", reconciliationFailedApps)).Error())
+	}
+	if len(reconciledApps) == 0 {
+		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile any nginx plus vhosts").Error())
+		return errors.New("failed to reconcile any nginx plus vhosts")
+	}
+	logger.Info("Successfully reconciled all nginx plus vhosts")
+	updateHealthForUpstreamUpdateAPI(true, "OK")
 	return nil
 }
 
