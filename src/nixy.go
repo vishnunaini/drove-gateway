@@ -122,9 +122,11 @@ type EndpointStatus struct {
 
 // Health struct
 type Health struct {
-	Config             Status
-	Template           Status
-	NamespaceEndpoints map[string][]EndpointStatus
+	sync.RWMutex
+	Config                Status
+	Template              Status
+	UpstreamUpdatesViaAPI Status
+	NamespaceEndpoints    map[string][]EndpointStatus
 }
 
 // Global variables
@@ -133,7 +135,7 @@ var date string        //set by ldflags
 var commit string      //set by ldflags
 var config = Config{LeftDelimiter: "{{", RightDelimiter: "}}"}
 var statsd g2s.Statter
-var health Health
+var health *Health
 var lastConfig string
 var db DataManager
 var logger = logrus.New()
@@ -177,9 +179,13 @@ var eventRefreshSignalQueue = make(chan bool, 2)
 // Global http transport for connection reuse
 var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 
-func newHealth() Health {
-	var h Health
+func newHealth() *Health {
+	h := &Health{}
 	h.NamespaceEndpoints = make(map[string][]EndpointStatus)
+	h.UpstreamUpdatesViaAPI = Status{
+		Healthy: false,
+		Message: "pending first check",
+	}
 	for _, nsConfig := range config.DroveNamespaces {
 		e := []EndpointStatus{}
 		for _, ep := range nsConfig.Drove {
@@ -267,6 +273,13 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 			health.Config.Healthy = true
 		}
 	}
+
+	// The health.UpstreamUpdatesViaAPI status is now set by the reload worker
+	// based on the actual outcome of API calls. We just read it here.
+	if !health.UpstreamUpdatesViaAPI.Healthy {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+
 	anyNamespaceDown := false
 	for _, nsEnpoint := range health.NamespaceEndpoints {
 		allBackendsDownForGivenNS := true
