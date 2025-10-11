@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"sync"
 	"path/filepath"
 	"reflect"
 	"strings"
