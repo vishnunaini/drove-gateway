@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -380,6 +381,19 @@ func IsUnixSocketAddr(addr string) bool {
 	return true
 }
 
+var (
+	haproxyClient     runtime_api.Runtime
+	haproxyClientOnce sync.Once
+	haproxyClientErr  error
+)
+
+func getHAProxyClient(ctx context.Context) (runtime_api.Runtime, error) {
+	haproxyClientOnce.Do(func() {
+		haproxyClient, haproxyClientErr = newHAProxyClient(ctx)
+	})
+	return haproxyClient, haproxyClientErr
+}
+
 func newHAProxyClient(ctx context.Context) (runtime_api.Runtime, error) {
 	haproxySocket := config.HaproxySocketAddr
 	logger.WithField("haproxy_socket", haproxySocket).Debug("Preparing to connect to HAProxy runtime API")
@@ -412,7 +426,7 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 	config.RLock()
 	defer config.RUnlock()
 
-	runtimeClient, err := newHAProxyClient(ctx)
+	runtimeClient, err := getHAProxyClient(ctx)
 	if err != nil {
 		return err
 	}
@@ -856,7 +870,7 @@ func checkTmpl() error {
 	defer config.RUnlock()
 	data := RenderingData{}
 	createRenderingData(&data)
-	t, err := getTmpl(TemplatePath)
+	t, err := getTmpl(TemplatePath) // <--- use cached version
 	health.Lock()
 	if err != nil {
 		health.Template.Healthy = false
@@ -875,24 +889,32 @@ func checkTmpl() error {
 	return err
 }
 
+var tmplCache *template.Template
+var tmplCacheErr error
+var tmplCacheOnce sync.Once
+
 func getTmpl(proxyTemplatePath string) (*template.Template, error) {
-	logger.WithFields(logrus.Fields{
-		"file": proxyTemplatePath,
-	}).Info("Reading template")
-	return template.New(filepath.Base(proxyTemplatePath)).
-		Delims(config.LeftDelimiter, config.RightDelimiter).
-		Funcs(template.FuncMap{
-			"hasPrefix": strings.HasPrefix,
-			"hasSuffix": strings.HasPrefix,
-			"contains":  strings.Contains,
-			"split":     strings.Split,
-			"join":      strings.Join,
-			"trim":      strings.Trim,
-			"replace":   strings.Replace,
-			"tolower":   strings.ToLower,
-			"getenv":    os.Getenv,
-			"datetime":  time.Now}).
-		ParseFiles(proxyTemplatePath)
+	tmplCacheOnce.Do(func() {
+		logger.WithFields(logrus.Fields{
+			"file": proxyTemplatePath,
+		}).Info("Reading template")
+		tmplCache, tmplCacheErr = template.New(filepath.Base(proxyTemplatePath)).
+			Delims(config.LeftDelimiter, config.RightDelimiter).
+			Funcs(template.FuncMap{
+				"hasPrefix": strings.HasPrefix,
+				"hasSuffix": strings.HasPrefix,
+				"contains":  strings.Contains,
+				"split":     strings.Split,
+				"join":      strings.Join,
+				"trim":      strings.Trim,
+				"replace":   strings.Replace,
+				"tolower":   strings.ToLower,
+				"getenv":    os.Getenv,
+				"datetime":  time.Now,
+			}).
+			ParseFiles(proxyTemplatePath)
+	})
+	return tmplCache, tmplCacheErr
 }
 
 func checkConf(path string) error {
