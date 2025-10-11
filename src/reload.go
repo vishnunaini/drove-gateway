@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sync"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -870,7 +871,7 @@ func checkTmpl() error {
 	defer config.RUnlock()
 	data := RenderingData{}
 	createRenderingData(&data)
-	t, err := getTmpl(TemplatePath) // <--- use cached version
+	t, err := getTmpl(TemplatePath)
 	health.Lock()
 	if err != nil {
 		health.Template.Healthy = false
