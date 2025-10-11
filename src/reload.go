@@ -243,6 +243,8 @@ func updateAndReloadConfig(data *RenderingData, reloadDisabled bool, currentBack
 			db.UpdateLastKnownVhosts(vhosts)
 			db.UpdateLastKnownBackends(currentBackendNames)
 		}
+	} else if reloadDisabled {
+		logger.Info("Config reload has been disabled. Not reloading " + config.ProxyPlatform + " even after vhost/backend changes")
 	}
 	return nil
 }
@@ -913,6 +915,16 @@ func getTmpl(proxyTemplatePath string) (*template.Template, error) {
 				"datetime":  time.Now,
 			}).
 			ParseFiles(proxyTemplatePath)
+		if tmplCacheErr != nil {
+			logger.WithFields(logrus.Fields{
+				"error": tmplCacheErr,
+				"file":  proxyTemplatePath,
+			}).Error("unable to read template")
+		} else {
+			logger.WithFields(logrus.Fields{
+				"file": proxyTemplatePath,
+			}).Info("Template read successfully")
+		}
 	})
 	return tmplCache, tmplCacheErr
 }
