@@ -424,6 +424,15 @@ func newHAProxyClient(ctx context.Context) (runtime_api.Runtime, error) {
 	return runtimeClient, nil
 }
 
+func isHTTPHostGroup(hosts []Host) bool {
+	for _, host := range hosts {
+		if host.PortType != "http" && host.PortType != "https" {
+			return false
+		}
+	}
+	return true
+}
+
 func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 	config.RLock()
 	defer config.RUnlock()
@@ -440,9 +449,19 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 			continue
 		}
 		for groupName, groupData := range app.Groups {
-			backendName := generateStableHaproxyBackendName(app, groupName)
-			if backendName != "" {
-				backendsToReconcile[backendName] = append(backendsToReconcile[backendName], groupData.Hosts...)
+			if len(groupData.Hosts) == 0 {
+				continue
+			} else if !isHTTPHostGroup(groupData.Hosts) {
+				logger.WithFields(logrus.Fields{
+					"Vhost": app.Vhost,
+					"group": groupName,
+					"hosts": groupData.Hosts,
+				}).Warning("Non-HTTP/HTTPS host group detected. Skipping HAProxy runtime API update for this group.")
+			} else {
+				backendName := generateStableHaproxyBackendName(app, groupName)
+				if backendName != "" {
+					backendsToReconcile[backendName] = append(backendsToReconcile[backendName], groupData.Hosts...)
+				}
 			}
 		}
 	}
@@ -513,7 +532,7 @@ func haproxyAreServerMapsIdentical(desiredMap map[string]Host, currentMap map[st
 		desiredIP := desiredHost.Host // Default to hostname if resolution fails.
 		resolveCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		if resolvedIP, err := haproxyResolveHostnameToIP(resolveCtx, desiredHost.Host); err == nil {
+		if resolvedIP, err := resolveHostnameToIP(resolveCtx, desiredHost.Host); err == nil {
 			desiredIP = resolvedIP
 		}
 
@@ -611,7 +630,7 @@ func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName
 	desiredIP := host.Host // Default to hostname if resolution fails. This will help a force update even if resolution is unavailable.
 	resolveCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if resolvedIP, err := haproxyResolveHostnameToIP(resolveCtx, host.Host); err != nil {
+	if resolvedIP, err := resolveHostnameToIP(resolveCtx, host.Host); err != nil {
 		logger.WithFields(logrus.Fields{"hostname": host.Host, "error": err}).Warning("Failed to resolve hostname; using hostname for comparison")
 	} else {
 		desiredIP = resolvedIP
@@ -654,7 +673,7 @@ func haproxyUpdateExistingServer(client runtime_api.Runtime, backend, serverName
 	}
 }
 
-func haproxyResolveHostnameToIP(ctx context.Context, hostname string) (string, error) {
+func resolveHostnameToIP(ctx context.Context, hostname string) (string, error) {
 	resolver := net.Resolver{}
 	ips, err := resolver.LookupHost(ctx, hostname)
 	if err != nil {
@@ -732,15 +751,9 @@ func nginxPlus(data *RenderingData) error {
 	logger.WithFields(logrus.Fields{"apps": data.Apps}).Debug("Updating upstreams for the whitelisted http/s drove vhosts")
 	for _, app := range data.Apps {
 		//Ensure UpdateHTTPServers is not called for streams TCP/UDP instances
-		isHTTPVHost := false
-		for _, t := range app.Hosts {
-			if (string(t.PortType) == "http") || (string(t.PortType) == "https") {
-				isHTTPVHost = true
-			}
+		isHTTPVHost := isHTTPHostGroup(app.Hosts)
 
-		}
-
-		if isHTTPVHost {
+		if isHTTPVHost && app.Vhost != "" && len(app.Hosts) > 0 {
 			var newFormattedServers []string
 			for _, t := range app.Hosts {
 				if (string(t.PortType) == "http") || (string(t.PortType) == "https") {
@@ -955,6 +968,7 @@ func checkConf(path string) error {
 }
 
 func reloadNginx() error {
+	logger.Info("Reloading nginx with cmd: " + config.NginxCmd)
 	// This is to allow arguments as well. Example "docker exec nginx..."
 	args := strings.Fields(config.NginxCmd)
 	head := args[0]
@@ -974,7 +988,7 @@ func reloadNginx() error {
 }
 
 func reloadHaproxy() error {
-	logger.Debug("Reloading haproxy with cmd: " + config.HaproxyReloadCmd)
+	logger.Info("Reloading haproxy with cmd: " + config.HaproxyReloadCmd)
 	// This is to allow other cmds as well. Example "docker exec haproxy..." or SIGUSR2 to master worker
 	args := strings.Fields(config.HaproxyReloadCmd)
 	head := args[0]
