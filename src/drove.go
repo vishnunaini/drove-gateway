@@ -92,7 +92,7 @@ func fetchRecentEvents(httpClient *http.Client, syncPoint *CurrSyncPoint, namesp
 		logger.WithFields(logrus.Fields{
 			"namespace": namespace,
 		}).Error("Error loading drove config")
-		err := errors.New("Error loading Drove Config")
+		err := errors.New("error loading Drove Config")
 		return nil, err
 	}
 
@@ -154,7 +154,6 @@ func refreshLeaderData(namespace string) bool {
 	}
 	if endpoint == "" {
 		logger.Error("all endpoints are down")
-		go countAllEndpointsDownErrors.WithLabelValues(namespace).Inc()
 		return false
 	}
 	currentLeader, err := db.ReadLeader(namespace)
@@ -356,7 +355,7 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 		logger.WithFields(logrus.Fields{
 			"host":      es.Endpoint,
 			"namespace": namespace,
-		}).Debug(" Endpoint is healthy")
+		}).Trace(" Endpoint is healthy")
 	}
 }
 
@@ -442,7 +441,14 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 	if len(droveConfig.Realm) > 0 {
 		realms = strings.Split(droveConfig.Realm, ",")
 	}
+
+	// Slices for cumulative logging of routing tags
+	var appsWithRoutingTag []string
+	var appsWithoutRoutingTag []string
+	var hostsIgnoredByRealm []string
+
 	for _, app := range jsonapps.Apps {
+		lowerVhost := strings.ToLower(app.Vhost)
 		var newapp = App{}
 		for _, task := range app.Hosts {
 			var newtask = Host{}
@@ -453,30 +459,22 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 		}
 		// Lets ignore apps if no instances are available
 		if len(newapp.Hosts) > 0 {
-			var toAppend = matchingVhost(app.Vhost, realms) || (len(droveConfig.RealmSuffix) > 0 && strings.HasSuffix(app.Vhost, droveConfig.RealmSuffix))
+			var toAppend = matchingVhost(lowerVhost, realms) || (len(droveConfig.RealmSuffix) > 0 && strings.HasSuffix(lowerVhost, droveConfig.RealmSuffix))
 			if toAppend {
-				vhosts.Vhosts[app.Vhost] = true
-				newapp.ID = app.Vhost
-				newapp.Vhost = app.Vhost
+				vhosts.Vhosts[lowerVhost] = true
+				newapp.ID = lowerVhost
+				newapp.Vhost = lowerVhost
 
-				var groupName = app.Vhost
+				var groupName = lowerVhost
 				if len(droveConfig.RoutingTag) > 0 {
-					if tagValue, ok := app.Tags[droveConfig.RoutingTag]; ok {
-						logger.WithFields(logrus.Fields{
-							"tag":   droveConfig.RoutingTag,
-							"vhost": newapp.Vhost,
-							"value": tagValue,
-						}).Debug("routing tag found")
+					if tagValue, ok := app.Tags[droveConfig.RoutingTag]; ok && tagValue != "" {
+						// Collect apps that have the routing tag
+						appsWithRoutingTag = append(appsWithRoutingTag, fmt.Sprintf("%s (value: %s)", newapp.Vhost, tagValue))
 						groupName = tagValue
 					} else {
-
-						logger.WithFields(logrus.Fields{
-							"tag":   droveConfig.RoutingTag,
-							"vhost": newapp.Vhost,
-						}).Debug("no routing tag found")
+						// Collect apps that are missing the routing tag
+						appsWithoutRoutingTag = append(appsWithoutRoutingTag, newapp.Vhost)
 					}
-				} else {
-					logrus.Debug("No routing tag found")
 				}
 
 				var hostGroup = HostGroup{}
@@ -484,7 +482,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 				hostGroup.Hosts = newapp.Hosts
 
 				newapp.Tags = app.Tags
-				if existingApp, ok := apps[app.Vhost]; ok {
+				if existingApp, ok := apps[lowerVhost]; ok {
 					newapp.Groups = existingApp.Groups
 					if existingGroup, ok := newapp.Groups[groupName]; ok {
 						existingGroup.Hosts = append(newapp.Hosts, existingGroup.Hosts...)
@@ -503,14 +501,35 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 					newapp.Groups = make(map[string]HostGroup)
 					newapp.Groups[groupName] = hostGroup
 				}
-				apps[app.Vhost] = newapp
+				apps[lowerVhost] = newapp
 			} else {
-				logger.WithFields(logrus.Fields{
-					"realm": droveConfig.Realm,
-					"vhost": app.Vhost,
-				}).Warn("Host ignored due to realm mismath")
+				hostsIgnoredByRealm = append(hostsIgnoredByRealm, lowerVhost)
 			}
 		}
+	}
+
+	// Log the cumulative results for routing tags
+	if len(droveConfig.RoutingTag) > 0 {
+		logger.WithFields(logrus.Fields{
+			"tag":                    droveConfig.RoutingTag,
+			"apps_with_tag":          appsWithRoutingTag,
+			"apps_without_tag":       appsWithoutRoutingTag,
+			"total_apps_with_tag":    len(appsWithRoutingTag),
+			"total_apps_without_tag": len(appsWithoutRoutingTag),
+			"namespace":              droveConfig.Name,
+		}).Debug("Routing tag processing summary")
+		// Update Prometheus gauges for routing tags
+		// Update StatsD gauges for routing tags
+	}
+
+	// Log the cumulative results for realm mismatches
+	if len(hostsIgnoredByRealm) > 0 {
+		logger.WithFields(logrus.Fields{
+			"configured_realms": droveConfig.Realm,
+			"ignored_hosts":     hostsIgnoredByRealm,
+			"total_ignored":     len(hostsIgnoredByRealm),
+			"namespace":         droveConfig.Name,
+		}).Debug("Hosts ignored due to realm mismatch summary")
 	}
 
 	currentApps, er := db.ReadApps(droveConfig.Name)
@@ -540,7 +559,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 }
 
 func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) bool {
-	logger.Debug("Reloading config for namespace" + namespace)
+	logger.Trace("Refreshing Apps Data for namespace " + namespace)
 	start := time.Now()
 	droveConfig, er := db.ReadDroveConfig(namespace)
 	if er != nil {
@@ -566,7 +585,7 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 	}
 	equal := syncAppsAndVhosts(droveConfig, &jsonapps, &vhosts)
 	if equal && !leaderShifted {
-		logger.Debug("no relevant App Data changes")
+		logger.Trace("no relevant App Data changes")
 		return false
 	}
 
