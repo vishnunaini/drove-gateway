@@ -492,14 +492,18 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 			reconciledBackends[backend] = true
 		}
 	}
-	if len(reconciliationFailedBackends) > 0 {
-		logger.WithField("failed_backends", reconciliationFailedBackends).Error("Failed to reconcile some HAProxy backends")
-		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile some HAProxy backends: "+fmt.Sprintf("%v", reconciliationFailedBackends)).Error())
+	if len(reconciliationFailedBackends) > 0 || len(reconciledBackends) == 0 {
+		if len(reconciliationFailedBackends) > 0 {
+			logger.WithField("failed_backends", reconciliationFailedBackends).Error("Failed to reconcile some HAProxy backends")
+			updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile some HAProxy backends: "+fmt.Sprintf("%v", reconciliationFailedBackends)).Error())
+		}
+		if len(reconciledBackends) == 0 {
+			logger.WithField("reconciled_backends", reconciledBackends).Error("Failed to reconcile any HAProxy backends")
+			updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile any HAProxy backends").Error())
+		}
+		return errors.New("Reconciliation failed for some or all HAProxy backends")
 	}
-	if len(reconciledBackends) == 0 {
-		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile any HAProxy backends").Error())
-		return errors.New("failed to reconcile any HAProxy backends")
-	}
+
 	logger.Info("Successfully reconciled all HAProxy backends")
 	updateHealthForUpstreamUpdateAPI(true, "OK")
 
@@ -507,6 +511,7 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 }
 
 func reconcileHAProxyBackend(client runtime_api.Runtime, backend string, desiredHosts []Host, currentServers []*runtime_models.RuntimeServer) error {
+	var errs []string
 	logger.WithField("backend", backend).Debug("Reconciling HAProxy backend")
 
 	desiredServerMap := haproxyBuildDesiredServerMap(desiredHosts)
@@ -517,9 +522,17 @@ func reconcileHAProxyBackend(client runtime_api.Runtime, backend string, desired
 		return nil
 	}
 
-	haproxyAddOrUpdateServers(client, backend, desiredServerMap, currentServerMap)
+	if err := haproxyAddOrUpdateServers(client, backend, desiredServerMap, currentServerMap); err != nil {
+		errs = append(errs, fmt.Sprintf("add/update servers: %v", err))
+	}
 	//add or update servers first to avoid downtime in case of complete replacement of servers
-	haproxyRemoveStaleServers(client, backend, currentServers, desiredServerMap)
+	if err := haproxyRemoveStaleServers(client, backend, currentServers, desiredServerMap); err != nil {
+		errs = append(errs, fmt.Sprintf("remove stale servers: %v", err))
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to reconcile HAProxy backend: %v", errs)
+	}
 
 	logger.WithField("backend", backend).Info("Successfully reconciled HAProxy backend")
 	return nil
