@@ -440,6 +440,7 @@ func isHTTPHostGroup(hosts []Host) bool {
 	return true
 }
 
+
 func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 	start := time.Now()
 	var resultLabel string
@@ -487,14 +488,62 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 		}
 	}
 
-	// Reconcile each unique backend. GetServersState can only be called once per backend. Runtime API library doesn't return backend names
+	// Reconcile each unique backend. GetServersState (i.e. show servers state %backendName ) can only be called once per backend. Runtime API library doesn't return backend names
 	// when calling GetServersState as models.RuntimeServers is a list of []*RuntimeServer without backend context returned by models.ParseRuntimeServer()
+	// If number of backends is large, this could take a while and instead we will use equivalent of "show servers state <all>" which returns all backends and servers in one call
+	// we will only call GetServersState if we see a diff in server names expected for a backend
+
+	//For clusters with small number of backends, calling GetServersState for each backend is not a big overhead
+	//but for a lot of backends, this can take a lot of time and we could have stale data for backends processed later in the loop
+	//E.g. For a heavily loaded HAProxy with 1000 backends and >4000 RPS, calling GetServersState for each backend could take upwards of 200 seconds
+	//So we will call GetServersState only if we don't find the backend in aggregated call to our own implementation of GetServersStateWithBackend
+	//This way we optimize for both small and large number of backends
+
+	//Upstream runtime doesn't expose the backend name when calling GetServersState API
+	//so we have our own implementation which calls "show servers state" command and parses the output to get servers grouped by backend name
+
+	//We could also use GetStats API but that would require more processing to convert stats to server state
+	//and stats don't show servers in maintenance mode unless they are enabled. So a disabled server in maintenance mode
+	//would not be visible in stats output but it is visible in "show servers state" output
+
+	//Despite the fact that "show servers state" is reliable, making the use configurable in case of any issues of changes to models in future versions of HAProxy client runtime
 	logger.WithField("count", len(backendsToReconcile)).Debug("Reconciling all unique HAProxy backends")
 	reconciledBackends := make(map[string]bool)
 	reconciliationFailedBackends := make(map[string]bool)
+	allServersState := make(map[string]runtime_models.RuntimeServers)
+	if !config.HaproxyDisableLargeBackendCountOptimisation {
+		logger.Debug("HAProxy large backend count optimisation is enabled. Using aggregated call to get all backends and servers state")
+		allServersState, err = haproxyClientGetServersStateWithBackend(runtimeClient)
+		if err != nil {
+			resultLabel = "error"
+			updateHealthForUpstreamUpdateAPI(false, err.Error())
+			logger.WithFields(logrus.Fields{
+				"error": err,
+			}).Error("Failed to get HAProxy servers state for all backends")
+			haproxyAPICallsFailed.WithLabelValues("get_servers_state_all_backends").Inc()
+			statsCountVec("haproxy_api_calls_failed_total", 1, "get_servers_state_all_backends")
+			return fmt.Errorf("failed to get HAProxy servers state for all backends: %w", err)
+		}
+		haproxyAPICallsSuccessful.WithLabelValues("get_servers_state_all_backends").Inc()
+		statsCountVec("haproxy_api_calls_successful_total", 1, "get_servers_state_all_backends")
+	}
+
 	for backend, hosts := range backendsToReconcile {
-		// Fetch servers for the specific backend.
-		currentServersForBackend, err := runtimeClient.GetServersState(backend)
+
+		currentServersForBackend := []*runtime_models.RuntimeServer{}
+		err := error(nil)
+		// If we have state for this backend from the aggregated call, use it directly.
+		// This avoids making an additional API call per backend.
+		if !config.HaproxyDisableLargeBackendCountOptimisation || allServersState[backend] != nil {
+			currentServersForBackend = allServersState[backend]
+		} else {
+			if allServersState[backend] != nil {
+				logger.Warn("Consider disabling large backend count optimisation with haproxy_disable_large_backend_count_optimisation set to true")
+			}
+			logger.WithField("backend", backend).Debug("No existing servers found for backend in aggregated state. Trying to get state for the backend directly")
+			currentServersForBackend, err = runtimeClient.GetServersState(backend)
+		}
+
 		if err != nil {
 			reconciliationFailedBackends[backend] = true
 			// This error is often not fatal; it can mean the backend doesn't exist yet.
@@ -1114,3 +1163,4 @@ func reloadWorker() {
 		}
 	}()
 }
+

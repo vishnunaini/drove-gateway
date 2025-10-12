@@ -66,41 +66,42 @@ type DroveNamespace struct {
 // Config struct used by the template engine
 type Config struct {
 	sync.RWMutex
-	Xproxy                                string
-	Address                               string           `json:"-"`
-	Port                                  string           `json:"-"`
-	PortWithTLS                           bool             `json:"-" toml:"port_use_tls"`
-	TLScertFile                           string           `json:"-" toml:"port_tls_certfile"`
-	TLSkeyFile                            string           `json:"-" toml:"port_tls_keyfile"`
-	DroveNamespaces                       []DroveNamespace `json:"-" toml:"namespaces"`
-	EventRefreshIntervalSec               int              `json:"-" toml:"event_refresh_interval_sec"`
-	ProxyPlatform                         string           `json:"-" toml:"proxy_platform"`
-	Nginxplusapiaddr                      string           `json:"-" toml:"nginxplusapiaddr"`
-	NginxReloadDisabled                   bool             `json:"-" toml:"nginx_reload_disabled"`
-	NginxConfig                           string           `json:"-" toml:"nginx_config"`
-	NginxTemplate                         string           `json:"-" toml:"nginx_template"`
-	NginxCmd                              string           `json:"-" toml:"nginx_cmd"`
-	NginxIgnoreCheck                      bool             `json:"-" toml:"nginx_ignore_check"`
-	HaproxySocketAddr                     string           `json:"-" toml:"haproxysocketaddr"`
-	HaproxyReloadDisabled                 bool             `json:"-" toml:"haproxy_reload_disabled"`
-	HaproxyConfig                         string           `json:"-" toml:"haproxy_config"`
-	HaproxyTemplate                       string           `json:"-" toml:"haproxy_template"`
-	HaproxyReloadCmd                      string           `json:"-" toml:"haproxy_reload_cmd"`
-	HaproxyCmd                            string           `json:"-" toml:"haproxy_cmd"`
-	HaproxyIgnoreCheck                    bool             `json:"-" toml:"haproxy_ignore_check"`
-	HaproxyServerNamePrefix               string           `json:"-" toml:"haproxy_server_name_prefix"`
-	HaproxyServerNameHostPortSeparator    string           `json:"-" toml:"haproxy_server_name_host_port_delimiter"`
-	HaproxyBackendIncludeRoutingTagSuffix bool             `json:"-" toml:"haproxy_backend_include_routing_tag_suffix"`
-	HaproxyBackendNameSeparator           string           `json:"-" toml:"haproxy_backend_name_separator"`
-	LeftDelimiter                         string           `json:"-" toml:"left_delimiter"`
-	RightDelimiter                        string           `json:"-" toml:"right_delimiter"`
-	MaxFailsUpstream                      *int             `json:"max_fails,omitempty"`
-	FailTimeoutUpstream                   string           `json:"fail_timeout,omitempty"`
-	SlowStartUpstream                     string           `json:"slow_start,omitempty"`
-	LogLevel                              string           `json:"-" toml:"loglevel"`
-	apiTimeout                            int              `json:"-" toml:"api_timeout"`
-	Statsd                                StatsdConfig
-	LastUpdates                           Updates
+	Xproxy                                      string
+	Address                                     string           `json:"-"`
+	Port                                        string           `json:"-"`
+	PortWithTLS                                 bool             `json:"-" toml:"port_use_tls"`
+	TLScertFile                                 string           `json:"-" toml:"port_tls_certfile"`
+	TLSkeyFile                                  string           `json:"-" toml:"port_tls_keyfile"`
+	DroveNamespaces                             []DroveNamespace `json:"-" toml:"namespaces"`
+	EventRefreshIntervalSec                     int              `json:"-" toml:"event_refresh_interval_sec"`
+	ProxyPlatform                               string           `json:"-" toml:"proxy_platform"`
+	Nginxplusapiaddr                            string           `json:"-" toml:"nginxplusapiaddr"`
+	NginxReloadDisabled                         bool             `json:"-" toml:"nginx_reload_disabled"`
+	NginxConfig                                 string           `json:"-" toml:"nginx_config"`
+	NginxTemplate                               string           `json:"-" toml:"nginx_template"`
+	NginxCmd                                    string           `json:"-" toml:"nginx_cmd"`
+	NginxIgnoreCheck                            bool             `json:"-" toml:"nginx_ignore_check"`
+	HaproxySocketAddr                           string           `json:"-" toml:"haproxysocketaddr"`
+	HaproxyDisableLargeBackendCountOptimisation bool             `json:"-" toml:"haproxy_disable_large_backend_count_optimisation"`
+	HaproxyReloadDisabled                       bool             `json:"-" toml:"haproxy_reload_disabled"`
+	HaproxyConfig                               string           `json:"-" toml:"haproxy_config"`
+	HaproxyTemplate                             string           `json:"-" toml:"haproxy_template"`
+	HaproxyReloadCmd                            string           `json:"-" toml:"haproxy_reload_cmd"`
+	HaproxyCmd                                  string           `json:"-" toml:"haproxy_cmd"`
+	HaproxyIgnoreCheck                          bool             `json:"-" toml:"haproxy_ignore_check"`
+	HaproxyServerNamePrefix                     string           `json:"-" toml:"haproxy_server_name_prefix"`
+	HaproxyServerNameHostPortSeparator          string           `json:"-" toml:"haproxy_server_name_host_port_delimiter"`
+	HaproxyBackendIncludeRoutingTagSuffix       bool             `json:"-" toml:"haproxy_backend_include_routing_tag_suffix"`
+	HaproxyBackendNameSeparator                 string           `json:"-" toml:"haproxy_backend_name_separator"`
+	LeftDelimiter                               string           `json:"-" toml:"left_delimiter"`
+	RightDelimiter                              string           `json:"-" toml:"right_delimiter"`
+	MaxFailsUpstream                            *int             `json:"max_fails,omitempty"`
+	FailTimeoutUpstream                         string           `json:"fail_timeout,omitempty"`
+	SlowStartUpstream                           string           `json:"slow_start,omitempty"`
+	LogLevel                                    string           `json:"-" toml:"loglevel"`
+	apiTimeout                                  int              `json:"-" toml:"api_timeout"`
+	Statsd                                      StatsdConfig
+	LastUpdates                                 Updates
 }
 
 // Updates timings used for metrics
