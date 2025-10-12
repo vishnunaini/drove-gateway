@@ -256,38 +256,6 @@ func nixyReload(w http.ResponseWriter, r *http.Request) {
 }
 
 func nixyHealth(w http.ResponseWriter, r *http.Request) {
-	if config.NginxReloadDisabled {
-		health.Template.Message = "Templating disabled"
-		health.Template.Healthy = true
-		health.Config.Message = "Config templating disabled"
-		health.Config.Healthy = true
-	} else {
-		err := checkTmpl()
-		if err != nil {
-			health.Template.Message = err.Error()
-			health.Template.Healthy = false
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			health.Template.Message = "OK"
-			health.Template.Healthy = true
-		}
-		err = checkConf(lastConfig)
-		if err != nil {
-			health.Config.Message = err.Error()
-			health.Config.Healthy = false
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			health.Config.Message = "OK"
-			health.Config.Healthy = true
-		}
-	}
-
-	// The health.UpstreamUpdatesViaAPI status is now set by the reload worker
-	// based on the actual outcome of API calls. We just read it here.
-	if !health.UpstreamUpdatesViaAPI.Healthy {
-		w.WriteHeader(http.StatusInternalServerError)
-	}
-
 	anyNamespaceDown := false
 	for _, nsEnpoint := range health.NamespaceEndpoints {
 		allBackendsDownForGivenNS := true
@@ -299,7 +267,9 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 		}
 		anyNamespaceDown = anyNamespaceDown || allBackendsDownForGivenNS
 	}
-	if anyNamespaceDown {
+
+	// the health is set by the respective workers, we just read it here.
+	if health.Template.Healthy == false || health.Config.Healthy == false || !health.UpstreamUpdatesViaAPI.Healthy || anyNamespaceDown {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 
