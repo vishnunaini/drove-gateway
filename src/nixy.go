@@ -349,19 +349,6 @@ func nixyReload(w http.ResponseWriter, r *http.Request) {
 }
 
 func nixyHealth(w http.ResponseWriter, r *http.Request) {
-	if health.Template.Healthy == false {
-		w.WriteHeader(http.StatusInternalServerError)
-	}
-	if health.Config.Healthy == false {
-		w.WriteHeader(http.StatusInternalServerError)
-	}
-
-	// The health.UpstreamUpdatesViaAPI status is now set by the reload worker
-	// based on the actual outcome of API calls. We just read it here.
-	if !health.UpstreamUpdatesViaAPI.Healthy {
-		w.WriteHeader(http.StatusInternalServerError)
-	}
-
 	anyNamespaceDown := false
 	for _, nsEnpoint := range health.NamespaceEndpoints {
 		allBackendsDownForGivenNS := true
@@ -373,7 +360,9 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 		}
 		anyNamespaceDown = anyNamespaceDown || allBackendsDownForGivenNS
 	}
-	if anyNamespaceDown {
+
+	// the health is set by the respective workers, we just read it here.
+	if health.Template.Healthy == false || health.Config.Healthy == false || !health.UpstreamUpdatesViaAPI.Healthy || anyNamespaceDown {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 
