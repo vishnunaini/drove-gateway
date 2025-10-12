@@ -215,13 +215,20 @@ func newHealth() *Health {
 		Healthy: false,
 		Message: "pending first check",
 	}
-	h.Config = Status{
-		Healthy: false,
-		Message: "pending first check",
-	}
-	h.Template = Status{
-		Healthy: false,
-		Message: "pending first check",
+	if ConfigReloadDisabled {
+		h.Config.Message = "Config Reload disabled"
+		h.Config.Healthy = true
+		h.Template.Message = "Templating disabled"
+		h.Template.Healthy = true
+	} else {
+		h.Config = Status{
+			Healthy: false,
+			Message: "pending first check",
+		}
+		h.Template = Status{
+			Healthy: false,
+			Message: "pending first check",
+		}
 	}
 	for _, nsConfig := range config.DroveNamespaces {
 		e := []EndpointStatus{}
@@ -342,30 +349,11 @@ func nixyReload(w http.ResponseWriter, r *http.Request) {
 }
 
 func nixyHealth(w http.ResponseWriter, r *http.Request) {
-	if ConfigReloadDisabled {
-		health.Template.Message = "Templating disabled"
-		health.Template.Healthy = true
-		health.Config.Message = "Config templating disabled"
-		health.Config.Healthy = true
-	} else {
-		err := checkTmpl()
-		if err != nil {
-			health.Template.Message = err.Error()
-			health.Template.Healthy = false
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			health.Template.Message = "OK"
-			health.Template.Healthy = true
-		}
-		err = checkConf(lastConfig)
-		if err != nil {
-			health.Config.Message = err.Error()
-			health.Config.Healthy = false
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			health.Config.Message = "OK"
-			health.Config.Healthy = true
-		}
+	if health.Template.Healthy == false {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+	if health.Config.Healthy == false {
+		w.WriteHeader(http.StatusInternalServerError)
 	}
 
 	// The health.UpstreamUpdatesViaAPI status is now set by the reload worker

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -100,7 +99,7 @@ func reload() error {
 		//Use of runtime API is enabled
 		//For HAProxy, config is generated but not loaded even when reload is disabled as there is no other way to persist state across reloads
 		//For Nginx+, ngx http_api maintains it's own state files if referenced in the running nginx config. Hence no templating is done at all when reload is disabled
-		if (ConfigReloadDisabled) && config.ProxyPlatform == "nginx" {
+		if ConfigReloadDisabled {
 			logger.Debug("Nginx: Template reload has been disabled")
 		} else {
 			vhosts := db.ReadAllKnownVhosts()
@@ -344,9 +343,13 @@ func writeConf(data *RenderingData) error {
 		return err
 	}
 	defer tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
 	lastConfig = tmpFile.Name()
 	err = template.Execute(tmpFile, &data)
 	if err != nil {
+		health.Lock()
+		health.Config.Healthy = false
+		health.Config.Message = err.Error()
 		return err
 	}
 	config.LastUpdates.LastConfigRendered = time.Now()
@@ -442,18 +445,22 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 		for groupName, groupData := range app.Groups {
 			if len(groupData.Hosts) == 0 {
 				continue
-			} else if !isHTTPHostGroup(groupData.Hosts) {
+			}
+
+			if !isHTTPHostGroup(groupData.Hosts) {
 				logger.WithFields(logrus.Fields{
 					"Vhost": app.Vhost,
 					"group": groupName,
 					"hosts": groupData.Hosts,
 				}).Warning("Non-HTTP/HTTPS host group detected. Skipping HAProxy runtime API update for this group.")
-			} else {
-				backendName := generateStableHaproxyBackendName(app, groupName)
-				if backendName != "" {
-					backendsToReconcile[backendName] = append(backendsToReconcile[backendName], groupData.Hosts...)
-				}
+				continue
 			}
+
+			backendName := generateStableHaproxyBackendName(app, groupName)
+			if backendName != "" {
+				backendsToReconcile[backendName] = append(backendsToReconcile[backendName], groupData.Hosts...)
+			}
+
 		}
 	}
 
@@ -950,30 +957,6 @@ func nginxPlus(data *RenderingData) error {
 	return nil
 }
 
-func checkTmpl() error {
-	config.RLock()
-	defer config.RUnlock()
-	data := RenderingData{}
-	createRenderingData(&data)
-	t, err := getTmpl(TemplatePath)
-	health.Lock()
-	if err != nil {
-		health.Template.Healthy = false
-		health.Template.Message = err.Error()
-	} else {
-		err = t.Execute(io.Discard, &data)
-		if err != nil {
-			health.Template.Healthy = false
-			health.Template.Message = err.Error()
-		} else {
-			health.Template.Healthy = true
-			health.Template.Message = "OK"
-		}
-	}
-	health.Unlock()
-	return err
-}
-
 var tmplCache *template.Template
 var tmplCacheErr error
 var tmplCacheOnce sync.Once
@@ -1003,10 +986,18 @@ func getTmpl(proxyTemplatePath string) (*template.Template, error) {
 				"error": tmplCacheErr,
 				"file":  proxyTemplatePath,
 			}).Error("unable to read template")
+			health.Lock()
+			health.Template.Healthy = false
+			health.Template.Message = tmplCacheErr.Error()
+			health.Unlock()
 		} else {
 			logger.WithFields(logrus.Fields{
 				"file": proxyTemplatePath,
 			}).Info("Template read successfully")
+			health.Lock()
+			health.Template.Healthy = true
+			health.Template.Message = "OK"
+			health.Unlock()
 		}
 	})
 	return tmplCache, tmplCacheErr
