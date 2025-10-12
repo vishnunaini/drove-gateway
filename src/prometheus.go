@@ -168,6 +168,32 @@ var (
 		},
 		[]string{"namespace"},
 	)
+
+	haproxyReconcileAllBackendsDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "haproxy_runtime_api_duration_seconds",
+			Help:    "Duration of haproxyRuntimeAPI in seconds.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"result"},
+	)
+	nginxPlusReconcileAllBackendsDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "nginx_plus_runtime_api_duration_seconds",
+			Help:    "Duration of nginxPlusRuntimeAPI in seconds.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"result"},
+	)
+	templateRenderDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: ns,
+			Name:      "template_render_duration_seconds",
+			Help:      "Duration taken to render the config from template in seconds.",
+			Buckets:   prometheus.DefBuckets,
+		},
+		[]string{"result"},
+	)
 )
 
 func setupPrometheusMetrics() {
@@ -215,6 +241,9 @@ func setupPrometheusMetrics() {
 	prometheus.MustRegister(haproxyAPICallsFailed)
 	prometheus.MustRegister(nginxAPICallsSuccessful)
 	prometheus.MustRegister(nginxAPICallsFailed)
+	prometheus.MustRegister(haproxyReconcileAllBackendsDuration)
+	prometheus.MustRegister(nginxPlusReconcileAllBackendsDuration)
+	prometheus.MustRegister(templateRenderDuration)
 
 }
 

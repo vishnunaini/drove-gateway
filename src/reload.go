@@ -328,6 +328,18 @@ func createRenderingData(data *RenderingData) {
 	return
 }
 
+func renderConfigFromTemplate(tmpl *template.Template, data *RenderingData, file *os.File) error {
+	start := time.Now()
+	err := tmpl.Execute(file, data)
+	duration := time.Since(start)
+	resultLabel := "success"
+	if err != nil {
+		resultLabel = "error"
+	}
+	statsTimingVec("template_render_duration", duration, resultLabel)
+	return err
+}
+
 func writeConf(data *RenderingData) error {
 	config.RLock()
 	defer config.RUnlock()
@@ -345,11 +357,13 @@ func writeConf(data *RenderingData) error {
 	defer tmpFile.Close()
 	defer os.Remove(tmpFile.Name())
 	lastConfig = tmpFile.Name()
-	err = template.Execute(tmpFile, &data)
+
+	err = renderConfigFromTemplate(template, data, tmpFile)
 	if err != nil {
 		health.Lock()
 		health.Config.Healthy = false
 		health.Config.Message = err.Error()
+		health.Unlock()
 		return err
 	}
 	config.LastUpdates.LastConfigRendered = time.Now()
@@ -427,11 +441,20 @@ func isHTTPHostGroup(hosts []Host) bool {
 }
 
 func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
+	start := time.Now()
+	var resultLabel string
+	defer func() {
+		duration := time.Since(start)
+		haproxyReconcileAllBackendsDuration.WithLabelValues(resultLabel).Observe(duration.Seconds())
+		statsTimingVec("haproxy_runtime_api_duration", duration, resultLabel)
+	}()
+
 	config.RLock()
 	defer config.RUnlock()
 
 	runtimeClient, err := newHAProxyClient(ctx)
 	if err != nil {
+		resultLabel = "error"
 		updateHealthForUpstreamUpdateAPI(false, err.Error())
 		return err
 	}
@@ -500,6 +523,7 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 		}
 	}
 	if len(reconciliationFailedBackends) > 0 || len(reconciledBackends) == 0 {
+		resultLabel = "error"
 		if len(reconciliationFailedBackends) > 0 {
 			logger.WithField("failed_backends", reconciliationFailedBackends).Error("Failed to reconcile some HAProxy backends")
 			updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile some HAProxy backends: "+fmt.Sprintf("%v", reconciliationFailedBackends)).Error())
@@ -511,6 +535,7 @@ func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 		return errors.New("Reconciliation failed for some or all HAProxy backends")
 	}
 
+	resultLabel = "success"
 	logger.Info("Successfully reconciled all HAProxy backends")
 	updateHealthForUpstreamUpdateAPI(true, "OK")
 
@@ -779,6 +804,13 @@ func nginxPlus(data *RenderingData) error {
 	//Current implementation only updates AppVhosts, does not suppport routing tag & LeaderVhost
 	config.RLock()
 	defer config.RUnlock()
+	start := time.Now()
+	var resultLabel string
+	defer func() {
+		duration := time.Since(start)
+		nginxPlusReconcileAllBackendsDuration.WithLabelValues(resultLabel).Observe(duration.Seconds())
+		statsTimingVec("nginxplus_runtime_api_duration", duration, resultLabel)
+	}()
 
 	logger.WithFields(logrus.Fields{
 		"nginx": config.Nginxplusapiaddr,
@@ -945,13 +977,16 @@ func nginxPlus(data *RenderingData) error {
 		reconciledApps[app.Vhost] = true
 	}
 	if len(reconciliationFailedApps) > 0 {
+		resultLabel = "error"
 		logger.WithField("failed_apps", reconciliationFailedApps).Error("Failed to reconcile some nginx plus vhosts")
 		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile some nginx plus vhosts: "+fmt.Sprintf("%v", reconciliationFailedApps)).Error())
 	}
 	if len(reconciledApps) == 0 {
+		resultLabel = "error"
 		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile any nginx plus vhosts").Error())
 		return errors.New("failed to reconcile any nginx plus vhosts")
 	}
+	resultLabel = "success"
 	logger.Info("Successfully reconciled all nginx plus vhosts")
 	updateHealthForUpstreamUpdateAPI(true, "OK")
 	return nil
