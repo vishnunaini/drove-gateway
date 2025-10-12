@@ -206,7 +206,7 @@ func writeConf(data *RenderingData) error {
 	config.RLock()
 	defer config.RUnlock()
 
-	template, err := getTmpl()
+	template, err := getTmpl(config.NginxTemplate)
 	if err != nil {
 		return err
 	}
