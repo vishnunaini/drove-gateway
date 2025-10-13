@@ -22,7 +22,7 @@ type NginxAPIManager struct {
 	}
 }
 
-func NewNginxAPIManager(nginxPlusApiAddr string) (*NginxAPIManager, error) {
+func NewNginxAPIManager(nginxPlusApiAddr string, apiTimeout time.Duration, MaxFails *int, FailTimeout string, SlowStart string) (*NginxAPIManager, error) {
 	endpoint := "http://" + nginxPlusApiAddr + "/api"
 	tr := &http.Transport{
 		MaxIdleConns:       30,
@@ -37,7 +37,15 @@ func NewNginxAPIManager(nginxPlusApiAddr string) (*NginxAPIManager, error) {
 		updateHealthForUpstreamUpdateAPI(false, err.Error())
 		return nil, err
 	}
-	return &NginxAPIManager{client: nginxClient}, nil
+	return &NginxAPIManager{client: nginxClient, apiAddr: nginxPlusApiAddr, apiTimeout: apiTimeout, upstreamParameters: struct {
+		MaxFails    *int
+		FailTimeout string
+		SlowStart   string
+	}{
+		MaxFails:    MaxFails,
+		FailTimeout: FailTimeout,
+		SlowStart:   SlowStart,
+	}}, nil
 }
 
 // ReconcileAllVhosts updates all HTTP vhosts using the NGINX Plus API.
