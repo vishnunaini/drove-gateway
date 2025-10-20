@@ -731,21 +731,16 @@ func haproxyAddNewServer(client runtime_api.Runtime, backend, serverName string,
 	}
 	haproxyAPICallsSuccessful.WithLabelValues("add_server").Inc()
 	statsCountVec("haproxy_api_calls_successful_total", 1, "add_server")
-	resolveCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	resolvedIP, err := resolveHostnameToIP(resolveCtx, host.Host)
-	if err != nil {
-		logger.WithFields(logrus.Fields{"hostname": host.Host, "error": err}).Warning("Failed to resolve hostname; using hostname for server address")
+	if err := client.SetServerHealth(backend, serverName, "up"); err != nil {
+		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set new server health to up")
+		haproxyAPICallsFailed.WithLabelValues("set_server_health_up").Inc()
+		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_health_up")
 	} else {
-		logger.WithFields(logrus.Fields{"hostname": host.Host, "resolved_ip": resolvedIP}).Debug("Resolved hostname to IP for new server")
+		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Trace("Set new server health to up")
+		haproxyAPICallsSuccessful.WithLabelValues("set_server_health_up").Inc()
+		statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_health_up")
 	}
-	//Always SetAddr explictly to ensure addr is set as desired even if HAProxy resolves hostname itself during AddServer but waits till first call is received on backend to resolve
-	if err := client.SetServerAddr(backend, serverName, resolvedIP, int(host.Port)); err != nil {
-		haproxyAPICallsFailed.WithLabelValues("set_server_addr").Inc()
-		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_addr")
-		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server address")
-		return err
-	}
+
 	haproxyAPICallsSuccessful.WithLabelValues("set_server_addr").Inc()
 	statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_addr")
 
