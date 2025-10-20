@@ -138,7 +138,7 @@ func reload() error {
 		}
 		logger.Debug("Updating upstreams via " + config.ProxyPlatform + " api")
 		if config.ProxyPlatform == "nginx" {
-			nginxMgr, err := NewNginxAPIManager(config.Nginxplusapiaddr, time.Duration(config.apiTimeout)*time.Second, config.MaxFailsUpstream, config.FailTimeoutUpstream, config.SlowStartUpstream)
+			nginxMgr, err := NewNginxAPIManager(config.Nginxplusapiaddr, time.Duration(config.apiTimeout)*time.Second, config.NginxMaxFailsUpstream, config.NginxFailTimeoutUpstream, config.NginxSlowStartUpstream)
 			if err != nil {
 				logger.WithFields(logrus.Fields{
 					"error": err.Error(),

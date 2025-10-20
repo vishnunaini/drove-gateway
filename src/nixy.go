@@ -95,9 +95,9 @@ type Config struct {
 	HaproxyBackendNameSeparator                 string           `json:"-" toml:"haproxy_backend_name_separator"`
 	LeftDelimiter                               string           `json:"-" toml:"left_delimiter"`
 	RightDelimiter                              string           `json:"-" toml:"right_delimiter"`
-	MaxFailsUpstream                            *int             `json:"max_fails,omitempty"`
-	FailTimeoutUpstream                         string           `json:"fail_timeout,omitempty"`
-	SlowStartUpstream                           string           `json:"slow_start,omitempty"`
+	NginxMaxFailsUpstream                       *int             `json:"max_fails,omitempty"`
+	NginxFailTimeoutUpstream                    string           `json:"fail_timeout,omitempty"`
+	NginxSlowStartUpstream                      string           `json:"slow_start,omitempty"`
 	LogLevel                                    string           `json:"-" toml:"loglevel"`
 	apiTimeout                                  int              `json:"-" toml:"api_timeout"`
 	Statsd                                      StatsdConfig
@@ -193,8 +193,8 @@ func setloglevel() {
 
 // set DataManager
 func setupDataManager() {
-	db = *NewDataManager(config.Xproxy, config.LeftDelimiter, config.RightDelimiter, config.MaxFailsUpstream,
-		config.FailTimeoutUpstream, config.SlowStartUpstream)
+	db = *NewDataManager(config.Xproxy, config.LeftDelimiter, config.RightDelimiter, config.NginxMaxFailsUpstream,
+		config.NginxFailTimeoutUpstream, config.NginxSlowStartUpstream)
 	for _, nsConfig := range config.DroveNamespaces {
 		db.CreateNamespace(nsConfig.Name, nsConfig.Drove, nsConfig.User, nsConfig.Pass,
 			nsConfig.AccessToken, nsConfig.Realm, nsConfig.RealmSuffix, nsConfig.RoutingTag, nsConfig.LeaderVHost)

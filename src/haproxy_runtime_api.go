@@ -328,6 +328,20 @@ func (m *HaproxyManager) addNewServer(backend, serverName string, host Host) err
 	haproxyAPICallsSuccessful.WithLabelValues("add_server").Inc()
 	statsCountVec("haproxy_api_calls_successful_total", 1, "add_server")
 
+	//SetServerHealth up is required to ensure current_address is not null if first connect fails
+	//Onus is on readiness check to ensure health but we shouldn't mark it down
+
+	if err := m.client.SetServerHealth(backend, serverName, "up"); err != nil {
+		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set new server health to up")
+		haproxyAPICallsFailed.WithLabelValues("set_server_health_up").Inc()
+		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_health_up")
+
+	} else {
+		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Trace("Set new server health to up")
+		haproxyAPICallsSuccessful.WithLabelValues("set_server_health_up").Inc()
+		statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_health_up")
+	}
+
 	if err := m.client.SetServerState(backend, serverName, "ready"); err != nil {
 		haproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
 		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_state_ready")
@@ -366,6 +380,16 @@ func (m *HaproxyManager) updateExistingServer(backend, serverName string, host H
 	} else {
 		haproxyAPICallsSuccessful.WithLabelValues("set_server_addr").Inc()
 		statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_addr")
+	}
+
+	if err := m.client.SetServerHealth(backend, serverName, "up"); err != nil {
+		haproxyAPICallsFailed.WithLabelValues("set_server_health_up").Inc()
+		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_health_up")
+		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server health to up")
+		errs = append(errs, fmt.Sprintf("set health: %v", err))
+	} else {
+		haproxyAPICallsSuccessful.WithLabelValues("set_server_health_up").Inc()
+		statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_health_up")
 	}
 
 	if err := m.client.SetServerState(backend, serverName, "ready"); err != nil {
