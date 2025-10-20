@@ -440,7 +440,6 @@ func isHTTPHostGroup(hosts []Host) bool {
 	return true
 }
 
-
 func haproxyRuntimeAPI(data *RenderingData, ctx context.Context) error {
 	start := time.Now()
 	var resultLabel string
@@ -732,6 +731,23 @@ func haproxyAddNewServer(client runtime_api.Runtime, backend, serverName string,
 	}
 	haproxyAPICallsSuccessful.WithLabelValues("add_server").Inc()
 	statsCountVec("haproxy_api_calls_successful_total", 1, "add_server")
+	resolveCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	resolvedIP, err := resolveHostnameToIP(resolveCtx, host.Host)
+	if err != nil {
+		logger.WithFields(logrus.Fields{"hostname": host.Host, "error": err}).Warning("Failed to resolve hostname; using hostname for server address")
+	} else {
+		logger.WithFields(logrus.Fields{"hostname": host.Host, "resolved_ip": resolvedIP}).Debug("Resolved hostname to IP for new server")
+	}
+	//Always SetAddr explictly to ensure addr is set as desired even if HAProxy resolves hostname itself during AddServer but waits till first call is received on backend to resolve
+	if err := client.SetServerAddr(backend, serverName, resolvedIP, int(host.Port)); err != nil {
+		haproxyAPICallsFailed.WithLabelValues("set_server_addr").Inc()
+		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_addr")
+		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server address")
+		return err
+	}
+	haproxyAPICallsSuccessful.WithLabelValues("set_server_addr").Inc()
+	statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_addr")
 
 	if err := client.SetServerState(backend, serverName, "ready"); err != nil {
 		haproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
@@ -925,7 +941,7 @@ func nginxPlus(data *RenderingData) error {
 			var finalformattedServers []nplus.UpstreamServer
 
 			for _, server := range newFormattedServers {
-				formattedServer := nplus.UpstreamServer{Server: server, MaxFails: config.MaxFailsUpstream, FailTimeout: config.FailTimeoutUpstream, SlowStart: config.SlowStartUpstream}
+				formattedServer := nplus.UpstreamServer{Server: server, MaxFails: config.NginxMaxFailsUpstream, FailTimeout: config.NginxFailTimeoutUpstream, SlowStart: config.NginxSlowStartUpstream}
 				finalformattedServers = append(finalformattedServers, formattedServer)
 			}
 			// If upstream has no servers, UpdateHTTPServers returns error as in-line GetHTTPServers returns error. server ID 0 needs to be explicitly initiated by a PATCH
@@ -1163,4 +1179,3 @@ func reloadWorker() {
 		}
 	}()
 }
-
