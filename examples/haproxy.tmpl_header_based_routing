@@ -79,7 +79,7 @@ frontend https_in
   {{- end}}
 
   {{- range $id, $app := .Apps}}
-  use_backend %[req.hdr(host),lower,word(1,:)]_%[req.hdr(X-Request-Env),lower] if env_in_list_{{$id}} header_env_present
+  use_backend %[req.hdr(host),lower,word(1,:)]{{ $.HaproxyBackendNameSeparator }}%[req.hdr(X-Request-Env),lower] if env_in_list_{{$id}} header_env_present
   {{- end}}
 
   #send to default env if no header is present or is empty
@@ -89,16 +89,16 @@ frontend https_in
 
 {{- range $id, $app := .Apps}}
  {{- range $gid, $hostgrp := .Groups}}
-backend {{$id}}_{{$gid}}
+backend {{$id}}{{ $.HaproxyBackendNameSeparator }}{{$gid}}
   mode http
   balance roundrobin
   http-request replace-header Host .* {{$app.Vhost}}
 
        {{- range $hostgrp.Hosts}}
 	  {{- if eq .PortType "https"}}
-	  server server_{{ .Host }}_{{ .Port }} {{ .Host }}:{{ .Port }} ssl verify required ca-file ca-certificates.crt
+    server {{ $.HaproxyServerNamePrefix }}{{ $.HaproxyServerNameHostPortSeparator }}{{ .Host }}_{{ .Port }} {{ .Host }}:{{ .Port }} {{$.HaproxyAddServerAttributesString}} {{$.HaproxyAddServerSSLAttributesString}}
 	  {{- else if eq .PortType "http"}}
-	  server server_{{ .Host }}_{{ .Port }} {{ .Host }}:{{ .Port }}
+    server {{ $.HaproxyServerNamePrefix }}{{ $.HaproxyServerNameHostPortSeparator }}{{ .Host }}_{{ .Port }} {{ .Host }}:{{ .Port }} {{$.HaproxyAddServerAttributesString}}
 	  {{- else if eq .PortType "tcp"}}
           #skipped plain tcp upstream server_{{ .Host }}_{{ .Port }}
 	  {{- else if eq .PortType "udp"}}

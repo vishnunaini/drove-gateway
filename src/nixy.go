@@ -93,6 +93,8 @@ type Config struct {
 	HaproxyServerNameHostPortSeparator          string           `json:"-" toml:"haproxy_server_name_host_port_delimiter"`
 	HaproxyBackendIncludeRoutingTagSuffix       bool             `json:"-" toml:"haproxy_backend_include_routing_tag_suffix"`
 	HaproxyBackendNameSeparator                 string           `json:"-" toml:"haproxy_backend_name_separator"`
+	HaproxyAddServerAttributesString            string           `json:"-" toml:"haproxy_add_server_attributes_string"`
+	HaproxyAddServerSSLAttributesString         string           `json:"-" toml:"haproxy_add_server_ssl_attributes_string"`
 	LeftDelimiter                               string           `json:"-" toml:"left_delimiter"`
 	RightDelimiter                              string           `json:"-" toml:"right_delimiter"`
 	NginxMaxFailsUpstream                       *int             `json:"max_fails,omitempty"`
@@ -145,6 +147,7 @@ type Health struct {
 	Config                Status
 	Template              Status
 	UpstreamUpdatesViaAPI Status
+	ResolverHealth        Status
 	NamespaceHealth       map[string]NamespaceStatus
 	NamespaceEndpoints    map[string][]EndpointStatus
 }
@@ -193,8 +196,11 @@ func setloglevel() {
 
 // set DataManager
 func setupDataManager() {
-	db = *NewDataManager(config.Xproxy, config.LeftDelimiter, config.RightDelimiter, config.NginxMaxFailsUpstream,
-		config.NginxFailTimeoutUpstream, config.NginxSlowStartUpstream)
+	db = *NewDataManager(config.Xproxy, config.ProxyPlatform, config.LeftDelimiter, config.RightDelimiter, config.NginxMaxFailsUpstream,
+		config.NginxFailTimeoutUpstream, config.NginxSlowStartUpstream, config.HaproxyAddServerAttributesString,
+		config.HaproxyAddServerSSLAttributesString, config.HaproxyServerNamePrefix,
+		config.HaproxyServerNameHostPortSeparator, config.HaproxyBackendNameSeparator,
+		config.HaproxyBackendIncludeRoutingTagSuffix)
 	for _, nsConfig := range config.DroveNamespaces {
 		db.CreateNamespace(nsConfig.Name, nsConfig.Drove, nsConfig.User, nsConfig.Pass,
 			nsConfig.AccessToken, nsConfig.Realm, nsConfig.RealmSuffix, nsConfig.RoutingTag, nsConfig.LeaderVHost)
@@ -214,6 +220,10 @@ func newHealth() *Health {
 	h.NamespaceHealth = make(map[string]NamespaceStatus)
 	h.UpstreamUpdatesViaAPI = Status{
 		Healthy: false,
+		Message: "pending first check",
+	}
+	h.ResolverHealth = Status{
+		Healthy: true,
 		Message: "pending first check",
 	}
 	if ConfigReloadDisabled {
@@ -303,6 +313,13 @@ func setupDefaultConfig() {
 		if config.HaproxyServerNameHostPortSeparator == "" {
 			config.HaproxyServerNameHostPortSeparator = "_"
 		}
+		if config.HaproxyAddServerAttributesString == "" {
+			config.HaproxyAddServerAttributesString = ""
+			//E.g check inter 2000 fall 3 rise 2. Not enabling healthchecks by default.
+		}
+		if config.HaproxyAddServerSSLAttributesString == "" {
+			config.HaproxyAddServerSSLAttributesString = "ssl verify none"
+		}
 	}
 }
 
@@ -363,7 +380,7 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// the health is set by the respective workers, we just read it here.
-	if health.Template.Healthy == false || health.Config.Healthy == false || !health.UpstreamUpdatesViaAPI.Healthy || anyNamespaceDown {
+	if health.Template.Healthy == false || health.Config.Healthy == false || health.ResolverHealth.Healthy == false || !health.UpstreamUpdatesViaAPI.Healthy || anyNamespaceDown {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 

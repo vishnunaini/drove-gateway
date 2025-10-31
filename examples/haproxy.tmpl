@@ -65,9 +65,9 @@ backend {{$app.Vhost}}
 
   {{- range $app.Hosts}}
   {{- if eq .PortType "https"}}
-  server server_{{ .Host }}_{{ .Port }} {{ .Host }}:{{ .Port }} ssl verify required ca-file ca-certificates.crt
+  server {{ $.HaproxyServerNamePrefix }}{{ $.HaproxyServerNameHostPortSeparator }}{{ .Host }}_{{ .Port }} {{ .Host }}:{{ .Port }} {{$.HaproxyAddServerAttributesString}} {{$.HaproxyAddServerSSLAttributesString}}
   {{- else if eq .PortType "http"}}
-  server server_{{ .Host }}_{{ .Port }} {{ .Host }}:{{ .Port }}
+  server {{ $.HaproxyServerNamePrefix }}{{ $.HaproxyServerNameHostPortSeparator }}{{ .Host }}_{{ .Port }} {{ .Host }}:{{ .Port }} {{$.HaproxyAddServerAttributesString}}
   {{- else if eq .PortType "tcp"}}
   #skipped plain tcp upstream server_{{ .Host }}_{{ .Port }}
   {{- else if eq .PortType "udp"}}
