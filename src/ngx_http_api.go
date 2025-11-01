@@ -74,9 +74,7 @@ func (m *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 		var newFormattedServers []string
 		for _, t := range app.Hosts {
 			if t.PortType == "http" || t.PortType == "https" {
-				ctxDns, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				ipRecord, err := resolveHostnameToIP(ctxDns, t.Host)
-				cancel()
+				ipRecord, err := resolveWithIPFallback(t.Host)
 				if err != nil {
 					logger.WithFields(logrus.Fields{
 						"error":    err,

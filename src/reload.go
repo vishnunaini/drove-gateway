@@ -25,14 +25,21 @@ type NamespaceRenderingData struct {
 }
 
 type RenderingData struct {
-	Xproxy              string
-	LeftDelimiter       string                            `json:"-" toml:"left_delimiter"`
-	RightDelimiter      string                            `json:"-" toml:"right_delimiter"`
-	MaxFailsUpstream    *int                              `json:"max_fails,omitempty"`
-	FailTimeoutUpstream string                            `json:"fail_timeout,omitempty"`
-	SlowStartUpstream   string                            `json:"slow_start,omitempty"`
-	Namespaces          map[string]NamespaceRenderingData `json:"namespaces"`
-	Apps                map[string]App
+	Xproxy                                string
+	ProxyPlatform                         string                            `json:"-"`
+	LeftDelimiter                         string                            `json:"-" toml:"left_delimiter"`
+	RightDelimiter                        string                            `json:"-" toml:"right_delimiter"`
+	MaxFailsUpstream                      *int                              `json:"max_fails,omitempty"`
+	FailTimeoutUpstream                   string                            `json:"fail_timeout,omitempty"`
+	SlowStartUpstream                     string                            `json:"slow_start,omitempty"`
+	HaproxyAddServerAttributesString      string                            `json:"-" toml:"haproxy_add_server_attributes_string"`
+	HaproxyAddServerSSLAttributesString   string                            `json:"-" toml:"haproxy_add_server_ssl_attributes_string"`
+	HaproxyServerNamePrefix               string                            `json:"-" toml:"haproxy_server_name_prefix"`
+	HaproxyServerNameHostPortSeparator    string                            `json:"-" toml:"haproxy_server_name_host_port_delimiter"`
+	HaproxyBackendNameSeparator           string                            `json:"-" toml:"haproxy_backend_name_separator"`
+	HaproxyBackendIncludeRoutingTagSuffix bool                              `json:"-" toml:"haproxy_backend_include_routing_tag_suffix"`
+	Namespaces                            map[string]NamespaceRenderingData `json:"namespaces"`
+	Apps                                  map[string]App
 }
 
 func reload() error {
@@ -50,6 +57,8 @@ func reload() error {
 		upstreamUpdateAPIEnabled = false
 	} else if (config.ProxyPlatform == "haproxy") && (len(config.HaproxySocketAddr) == 0 || config.HaproxySocketAddr == "") {
 		logger.Debug("Platform: " + config.ProxyPlatform + " Socket addr: " + config.HaproxySocketAddr)
+		logger.Debug("Runtime API add server default-server attributes:" + config.HaproxyAddServerAttributesString)
+		logger.Debug("Runtime API add server ssl attributes:" + config.HaproxyAddServerSSLAttributesString)
 		//HAProxy Runtime API is disabled
 		upstreamUpdateAPIEnabled = false
 	} else {
@@ -267,11 +276,18 @@ func createRenderingData(data *RenderingData) {
 	staticData := db.ReadStaticData()
 
 	data.Xproxy = staticData.Xproxy
+	data.ProxyPlatform = config.ProxyPlatform
 	data.LeftDelimiter = staticData.LeftDelimiter
 	data.RightDelimiter = staticData.RightDelimiter
 	data.FailTimeoutUpstream = staticData.FailTimeoutUpstream
 	data.MaxFailsUpstream = staticData.MaxFailsUpstream
 	data.SlowStartUpstream = staticData.SlowStartUpstream
+	data.HaproxyAddServerAttributesString = staticData.HaproxyAddServerAttributesString
+	data.HaproxyAddServerSSLAttributesString = staticData.HaproxyAddServerSSLAttributesString
+	data.HaproxyServerNamePrefix = staticData.HaproxyServerNamePrefix
+	data.HaproxyServerNameHostPortSeparator = staticData.HaproxyServerNameHostPortSeparator
+	data.HaproxyBackendNameSeparator = staticData.HaproxyBackendNameSeparator
+	data.HaproxyBackendIncludeRoutingTagSuffix = staticData.HaproxyBackendIncludeRoutingTagSuffix
 	data.Namespaces = make(map[string]NamespaceRenderingData)
 
 	allApps := make(map[string]App)
@@ -423,6 +439,28 @@ func isHTTPHostGroup(hosts []Host) bool {
 	return true
 }
 
+func resolveWithIPFallback(hostname string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ip, err := resolveHostnameToIP(ctx, hostname)
+	if err != nil {
+		logger.WithFields(logrus.Fields{
+			"hostname": hostname,
+			"error":    err,
+		}).Warning("DNS resolution failed, falling back to hostname")
+		health.Lock()
+		health.ResolverHealth.Healthy = false
+		health.ResolverHealth.Message = fmt.Sprintf("DNS resolution failed for %s: %v", hostname, err)
+		health.Unlock()
+		return hostname, err
+	}
+	health.Lock()
+	health.ResolverHealth.Healthy = true
+	health.ResolverHealth.Message = "OK"
+	health.Unlock()
+	return ip, nil
+}
+
 func resolveHostnameToIP(ctx context.Context, hostname string) (string, error) {
 	resolver := net.Resolver{}
 	ips, err := resolver.LookupHost(ctx, hostname)
@@ -469,7 +507,7 @@ func generateStableHaproxyBackendName(app App, groupName string) string {
 func generateStableHaproxyServerName(host Host) string {
 	// Replace characters that are invalid in HAProxy server names.
 	sanitizer := strings.NewReplacer(":", config.HaproxyServerNameHostPortSeparator)
-	return fmt.Sprintf("%s_%s_%d", config.HaproxyServerNamePrefix, sanitizer.Replace(host.Host), host.Port)
+	return fmt.Sprintf("%s%s%s%s%d", config.HaproxyServerNamePrefix, config.HaproxyServerNameHostPortSeparator, sanitizer.Replace(host.Host), config.HaproxyServerNameHostPortSeparator, host.Port)
 }
 
 var tmplCache *template.Template

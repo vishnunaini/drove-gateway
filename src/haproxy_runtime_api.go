@@ -232,15 +232,18 @@ func (m *HaproxyManager) areServerMapsIdentical(desiredMap map[string]Host, curr
 	return true
 }
 
-func (m *HaproxyManager) compareServerConfigs(desired Host, current runtime_models.RuntimeServer) (bool, string, string) {
+func (m *HaproxyManager) compareServerConfigs(desiredHost Host, current runtime_models.RuntimeServer) (bool, string, string) {
 	// Resolve desired hostname to IP for a reliable comparison with HAProxy's runtime state.
-	desiredIP := desired.Host // Default to hostname if resolution fails.
+	desiredIP, err := resolveWithIPFallback(desiredHost.Host)
+	if err != nil {
+		logger.WithFields(logrus.Fields{"hostname": desiredHost.Host, "error": err}).Warning("Failed to resolve hostname; using hostname for comparison")
+	}
 	resolveCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if resolvedIP, err := resolveHostnameToIP(resolveCtx, desired.Host); err == nil {
+	if resolvedIP, err := resolveHostnameToIP(resolveCtx, desiredHost.Host); err == nil {
 		desiredIP = resolvedIP
 	}
-	portMatches := current.Port != nil && *current.Port == int64(desired.Port)
+	portMatches := current.Port != nil && *current.Port == int64(desiredHost.Port)
 	addressMatches := current.Address == desiredIP
 	adminStateMatches := current.AdminState == "ready"
 	// We only check for 'up' or 'maint' as operational state can fluctuate (e.g., 'going down').
@@ -317,9 +320,33 @@ func (m *HaproxyManager) addOrUpdateServers(backend string, desiredServerMap map
 	return nil
 }
 
+// settings from default-server statement in config are not applied when adding server via runtime api
+// all default-server params should be added explictly here
+// only use IP while adding server, not fqdn. HAProxy resolves the hostname only at startup/reload and dynamic servers don't support fqdn resolution
 func (m *HaproxyManager) addNewServer(backend, serverName string, host Host) error {
 	logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Info("Adding new server")
-	if err := m.client.AddServer(backend, serverName, fmt.Sprintf("%s:%d", host.Host, host.Port)); err != nil {
+	desiredIP, err := resolveWithIPFallback(host.Host)
+	if err != nil {
+		logger.WithFields(logrus.Fields{"hostname": host.Host, "error": err}).Warning("Failed to resolve hostname; using hostname for server addition")
+	}
+	// Resolve desired hostname to IP for HAProxy server addition.
+
+	if host.PortType != "http" && host.PortType != "https" {
+		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Warning("Non-HTTP/HTTPS port type detected. Skipping addition of this server via HAProxy runtime API.")
+		return nil
+	}
+
+	attributes_string := config.HaproxyAddServerAttributesString
+	logger.WithFields(logrus.Fields{"attributes": attributes_string, "backend": backend, "server": serverName}).Debug("Adding attributes to server")
+
+	if host.PortType == "https" {
+		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Debug("HTTPS port type detected. HAProxy runtime API does not support adding SSL parameters via runtime. Ensure SSL settings like ciphers are configured in the static config.")
+		attributes_string = fmt.Sprintf("%s %s", attributes_string, config.HaproxyAddServerSSLAttributesString)
+		logger.WithFields(logrus.Fields{"attributes": attributes_string, "backend": backend, "server": serverName}).Info("Adding SSL attributes to server")
+
+	}
+
+	if err := m.client.AddServer(backend, serverName, fmt.Sprintf("%s:%d %s", desiredIP, host.Port, attributes_string)); err != nil {
 		haproxyAPICallsFailed.WithLabelValues("add_server").Inc()
 		statsCountVec("haproxy_api_calls_failed_total", 1, "add_server")
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")
@@ -327,20 +354,6 @@ func (m *HaproxyManager) addNewServer(backend, serverName string, host Host) err
 	}
 	haproxyAPICallsSuccessful.WithLabelValues("add_server").Inc()
 	statsCountVec("haproxy_api_calls_successful_total", 1, "add_server")
-
-	//SetServerHealth up is required to ensure current_address is not null if first connect fails
-	//Onus is on readiness check to ensure health but we shouldn't mark it down
-
-	if err := m.client.SetServerHealth(backend, serverName, "up"); err != nil {
-		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set new server health to up")
-		haproxyAPICallsFailed.WithLabelValues("set_server_health_up").Inc()
-		statsCountVec("haproxy_api_calls_failed_total", 1, "set_server_health_up")
-
-	} else {
-		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Trace("Set new server health to up")
-		haproxyAPICallsSuccessful.WithLabelValues("set_server_health_up").Inc()
-		statsCountVec("haproxy_api_calls_successful_total", 1, "set_server_health_up")
-	}
 
 	if err := m.client.SetServerState(backend, serverName, "ready"); err != nil {
 		haproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
