@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -102,7 +103,6 @@ type Config struct {
 	NginxSlowStartUpstream                      string           `json:"slow_start,omitempty"`
 	LogLevel                                    string           `json:"-" toml:"loglevel"`
 	apiTimeout                                  int              `json:"-" toml:"api_timeout"`
-	Statsd                                      StatsdConfig
 	LastUpdates                                 Updates
 }
 
@@ -112,13 +112,6 @@ type Updates struct {
 	LastConfigRendered     time.Time
 	LastConfigValid        time.Time
 	LastProxyProgramReload time.Time
-}
-
-// StatsdConfig statsd stuct
-type StatsdConfig struct {
-	Addr       string
-	Namespace  string
-	SampleRate int `toml:"sample_rate"`
 }
 
 // Status health status struct
@@ -172,6 +165,16 @@ var ConfigReloadDisabled bool
 var ProgramCmdConfFileArg string
 var ProgramCmdConfTestArg string
 
+var Metrics NixyMetrics
+
+// ProxyManager interface for runtime API managers
+type ProxyManager interface {
+	Reconcile(data *RenderingData) error
+}
+
+// Global proxy manager instance
+var GlobalProxyManager ProxyManager
+
 // set log level
 func setloglevel() {
 	logLevel := logrus.InfoLevel
@@ -197,10 +200,8 @@ func setloglevel() {
 // set DataManager
 func setupDataManager() {
 	db = *NewDataManager(config.Xproxy, config.ProxyPlatform, config.LeftDelimiter, config.RightDelimiter, config.NginxMaxFailsUpstream,
-		config.NginxFailTimeoutUpstream, config.NginxSlowStartUpstream, config.HaproxyAddServerAttributesString,
-		config.HaproxyAddServerSSLAttributesString, config.HaproxyServerNamePrefix,
-		config.HaproxyServerNameHostPortSeparator, config.HaproxyBackendNameSeparator,
-		config.HaproxyBackendIncludeRoutingTagSuffix)
+		config.NginxFailTimeoutUpstream, config.NginxSlowStartUpstream, config.HaproxyAddServerAttributesString, config.HaproxyAddServerSSLAttributesString,
+		config.HaproxyServerNamePrefix, config.HaproxyServerNameHostPortSeparator, config.HaproxyBackendNameSeparator, config.HaproxyBackendIncludeRoutingTagSuffix)
 	for _, nsConfig := range config.DroveNamespaces {
 		db.CreateNamespace(nsConfig.Name, nsConfig.Drove, nsConfig.User, nsConfig.Pass,
 			nsConfig.AccessToken, nsConfig.Realm, nsConfig.RealmSuffix, nsConfig.RoutingTag, nsConfig.LeaderVHost)
@@ -319,6 +320,7 @@ func setupDefaultConfig() {
 		}
 		if config.HaproxyAddServerSSLAttributesString == "" {
 			config.HaproxyAddServerSSLAttributesString = "ssl verify none"
+			//E.g ssl verify required ca-file ca-certificates.crt
 		}
 	}
 }
@@ -404,6 +406,16 @@ func nixyVersion(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+// Implement ProxyManager interface for NginxAPIManager
+func (m *NginxAPIManager) Reconcile(data *RenderingData) error {
+	return m.ReconcileAllVhosts(data)
+}
+
+// Implement ProxyManager interface for HaproxyManager
+func (m *HaproxyManager) Reconcile(data *RenderingData) error {
+	return m.ReconcileAllBackends(data, config.HaproxyDisableLargeBackendCountOptimisation)
+}
+
 func main() {
 	configtoml := flag.String("f", "nixy.toml", "Path to config. (default nixy.toml)")
 	versionflag := flag.Bool("v", false, "prints current nixy version")
@@ -434,16 +446,38 @@ func main() {
 		}).Fatal("problem in config")
 	}
 
-	statsd, err = setupStatsd()
-	if err != nil {
-		logger.WithFields(logrus.Fields{
-			"error": err.Error(),
-		}).Error("unable to Dial statsd")
-		statsd = g2s.Noop() //fallback to Noop.
-	}
 	setupDefaultConfig()
 	setupPrometheusMetrics()
 	setupDataManager()
+
+	// Conditionally initialize runtime API manager at startup
+	if config.ProxyPlatform == "nginx" && len(config.Nginxplusapiaddr) > 0 {
+		mgr, err := NewNginxAPIManager(
+			config.Nginxplusapiaddr,
+			time.Duration(config.apiTimeout)*time.Second,
+			config.NginxMaxFailsUpstream,
+			config.NginxFailTimeoutUpstream,
+			config.NginxSlowStartUpstream,
+		)
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"error": err.Error(),
+			}).Fatal("unable to create nginx api manager at startup; exiting nixy")
+		}
+		GlobalProxyManager = mgr
+		logger.Info("NginxAPIManager initialized at startup")
+	} else if config.ProxyPlatform == "haproxy" && len(config.HaproxySocketAddr) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.apiTimeout)*time.Second)
+		defer cancel()
+		mgr, err := NewHaproxyManager(ctx, config.HaproxySocketAddr, config.HaproxyDisableLargeBackendCountOptimisation)
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"error": err.Error(),
+			}).Fatal("unable to create haproxy manager at startup; exiting nixy")
+		}
+		GlobalProxyManager = mgr
+		logger.Info("HaproxyManager initialized at startup")
+	}
 	mux := mux.NewRouter()
 	mux.HandleFunc("/", nixyVersion)
 	mux.HandleFunc("/v1/reload", nixyReload)

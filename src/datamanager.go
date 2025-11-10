@@ -31,7 +31,7 @@ type NamespaceData struct {
 
 type StaticConfig struct {
 	Xproxy                                string
-	ProxyPlatform                         string
+	ProxyPlatform                         string `json:"-" toml:"proxy_platform"`
 	LeftDelimiter                         string `json:"-" toml:"left_delimiter"`
 	RightDelimiter                        string `json:"-" toml:"right_delimiter"`
 	MaxFailsUpstream                      *int   `json:"max_fails,omitempty"`
@@ -66,8 +66,8 @@ func NewDataManager(inXproxy string, inProxyPlatform string, inLeftDelimiter str
 		StaticData: StaticConfig{Xproxy: inXproxy, ProxyPlatform: inProxyPlatform, LeftDelimiter: inLeftDelimiter, RightDelimiter: inRightDelimiter,
 			MaxFailsUpstream: inMaxFailsUpstream, FailTimeoutUpstream: inFailTimeoutUpstream, SlowStartUpstream: inSlowStartUpstream,
 			HaproxyAddServerAttributesString: inHaproxyAddServerAttributesString, HaproxyAddServerSSLAttributesString: inHaproxyAddServerSSLAttributesString,
-			HaproxyServerNamePrefix: inHaproxyServerNamePrefix, HaproxyServerNameHostPortSeparator: inHaproxyServerNameHostPortSeparator, HaproxyBackendNameSeparator: inHaproxyBackendNameSeparator,
-			HaproxyBackendIncludeRoutingTagSuffix: inHaproxyBackendIncludeRoutingTagSuffix},
+			HaproxyServerNamePrefix: inHaproxyServerNamePrefix, HaproxyServerNameHostPortSeparator: inHaproxyServerNameHostPortSeparator,
+			HaproxyBackendNameSeparator: inHaproxyBackendNameSeparator, HaproxyBackendIncludeRoutingTagSuffix: inHaproxyBackendIncludeRoutingTagSuffix},
 		LastKnownVhosts:     emptyLastKnownVhosts,
 		LastKnownBackends:   make(map[string]bool),
 		LastReloadTimestamp: time.Now(),
