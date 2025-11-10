@@ -55,7 +55,6 @@ func (m *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 	defer func() {
 		duration := time.Since(start)
 		nginxPlusReconcileAllBackendsDuration.WithLabelValues(resultLabel).Observe(duration.Seconds())
-		statsTimingVec("nginxplus_runtime_api_duration", duration, resultLabel)
 	}()
 
 	logger.WithFields(logrus.Fields{
@@ -108,7 +107,6 @@ func (m *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 		err := m.client.CheckIfUpstreamExists(upstreamtocheck)
 		if err != nil {
 			nginxAPICallsFailed.WithLabelValues("check_if_upstream_exists").Inc()
-			statsCountVec("nginx_api_calls_failed_total", 1, "check_if_upstream_exists")
 			logger.WithFields(logrus.Fields{
 				"Adding fresh upstream for": upstreamtocheck,
 			}).Info("Adding first server for upstream")
@@ -121,10 +119,8 @@ func (m *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 			addErr := m.client.UpdateHTTPServer(upstreamtocheck, finalformattedServers[0])
 			if addErr != nil {
 				nginxAPICallsFailed.WithLabelValues("update_http_server").Inc()
-				statsCountVec("nginx_api_calls_failed_total", 1, "update_http_server")
 			} else {
 				nginxAPICallsSuccessful.WithLabelValues("update_http_server").Inc()
-				statsCountVec("nginx_api_calls_successful_total", 1, "update_http_server")
 			}
 			// Wait for upstream to exist
 			if addErr != nil {
@@ -141,7 +137,6 @@ func (m *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 						time.Sleep(5 * time.Millisecond)
 						if m.client.CheckIfUpstreamExists(upstreamtocheck) == nil {
 							nginxAPICallsSuccessful.WithLabelValues("check_if_upstream_exists").Inc()
-							statsCountVec("nginx_api_calls_successful_total", 1, "check_if_upstream_exists")
 							break
 						}
 					}
@@ -151,14 +146,11 @@ func (m *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 
 		if err == nil {
 			nginxAPICallsSuccessful.WithLabelValues("check_if_upstream_exists").Inc()
-			statsCountVec("nginx_api_calls_successful_total", 1, "check_if_upstream_exists")
 			added, deleted, updated, updateErr := m.client.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
 			if updateErr != nil {
 				nginxAPICallsFailed.WithLabelValues("update_http_servers").Inc()
-				statsCountVec("nginx_api_calls_failed_total", 1, "update_http_servers")
 			} else {
 				nginxAPICallsSuccessful.WithLabelValues("update_http_servers").Inc()
-				statsCountVec("nginx_api_calls_successful_total", 1, "update_http_servers")
 			}
 			if added != nil {
 				logger.WithFields(logrus.Fields{

@@ -102,7 +102,6 @@ type Config struct {
 	NginxSlowStartUpstream                      string           `json:"slow_start,omitempty"`
 	LogLevel                                    string           `json:"-" toml:"loglevel"`
 	apiTimeout                                  int              `json:"-" toml:"api_timeout"`
-	Statsd                                      StatsdConfig
 	LastUpdates                                 Updates
 }
 
@@ -112,13 +111,6 @@ type Updates struct {
 	LastConfigRendered     time.Time
 	LastConfigValid        time.Time
 	LastProxyProgramReload time.Time
-}
-
-// StatsdConfig statsd stuct
-type StatsdConfig struct {
-	Addr       string
-	Namespace  string
-	SampleRate int `toml:"sample_rate"`
 }
 
 // Status health status struct
@@ -433,13 +425,6 @@ func main() {
 		}).Fatal("problem in config")
 	}
 
-	statsd, err = setupStatsd()
-	if err != nil {
-		logger.WithFields(logrus.Fields{
-			"error": err.Error(),
-		}).Error("unable to Dial statsd")
-		statsd = g2s.Noop() //fallback to Noop.
-	}
 	setupDefaultConfig()
 	setupPrometheusMetrics()
 	setupDataManager()

@@ -93,7 +93,6 @@ func reload() error {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to reload " + config.ProxyPlatform + " config")
-			go statsCount("reload.failed", 1)
 			go countFailedReloads.Inc()
 			return err
 		}
@@ -181,7 +180,6 @@ func reload() error {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to update upstreams via " + config.ProxyPlatform + " api")
-			go statsCount("reload.failed", 1)
 			go countFailedReloads.Inc()
 		} else {
 			updateHealthForUpstreamUpdateAPI(true, "OK")
@@ -191,7 +189,6 @@ func reload() error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to generate nginx config")
-		go statsCount("reload.failed", 1)
 		go countFailedReloads.Inc()
 		return err
 	}
@@ -218,7 +215,6 @@ func updateWithoutReloadConfig(data *RenderingData) error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to generate " + config.ProxyPlatform + " config")
-		go statsCount("reload.failed", 1)
 		go countFailedReloads.Inc()
 		return err
 	}
@@ -234,7 +230,6 @@ func updateAndReloadConfig(data *RenderingData, reloadDisabled bool, currentBack
 	err := writeConf(data)
 	if err != nil {
 		go countFailedReloads.Inc()
-		go statsCount("reloads_failed", 1)
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to write " + config.ProxyPlatform + " config")
@@ -253,14 +248,11 @@ func updateAndReloadConfig(data *RenderingData, reloadDisabled bool, currentBack
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to reload nginx")
-			go statsCount("reload.failed", 1)
 			go countFailedReloads.Inc()
 		} else {
 			elapsed := time.Since(start)
 			go countSuccessfulReloads.Inc()
-			go statsCount("reloads_successful", 1)
 			go observeReloadTimeMetric(elapsed)
-			go statsTiming("reload_duration", elapsed)
 			config.LastUpdates.LastProxyProgramReload = time.Now()
 			db.UpdateLastKnownVhosts(vhosts)
 			db.UpdateLastKnownBackends(currentBackendNames)
@@ -363,7 +355,6 @@ func renderConfigFromTemplate(tmpl *template.Template, data *RenderingData, file
 	if err != nil {
 		resultLabel = "error"
 	}
-	statsTimingVec("template_render_duration", duration, resultLabel)
 	return err
 }
 

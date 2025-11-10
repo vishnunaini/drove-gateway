@@ -155,12 +155,10 @@ func refreshLeaderData(namespace string) bool {
 	if endpoint == "" {
 		logger.Error("all endpoints are down")
 		gaugeAllEndpointsDown.WithLabelValues(namespace).Set(1)
-		statsGaugeVec("all_endpoints_down", 1, namespace)
 		return false
 	}
 
 	gaugeAllEndpointsDown.WithLabelValues(namespace).Set(0)
-	statsGaugeVec("all_endpoints_down", 0, namespace)
 
 	currentLeader, err := db.ReadLeader(namespace)
 	if err != nil {
@@ -352,7 +350,6 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 				"namespace": namespace,
 			}).Error("endpoint is down")
 			go countEndpointDownErrors.WithLabelValues(namespace).Inc()
-			go statsCountVec("endpoint_down_errors_total", 1, namespace)
 			health.NamespaceEndpoints[namespace][i].Healthy = false
 			health.NamespaceEndpoints[namespace][i].Message = err.Error()
 			continue
@@ -388,9 +385,6 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 
 	gaugeConfiguredEndpoints.WithLabelValues(namespace).Set(float64(configuredCount))
 	gaugeHealthyEndpoints.WithLabelValues(namespace).Set(float64(healthyCount))
-
-	statsGaugeVec("endpoints_configured_total", float64(configuredCount), namespace)
-	statsGaugeVec("endpoints_healthy_total", float64(healthyCount), namespace)
 }
 
 func endpointHealth(namespace string) {
@@ -557,8 +551,6 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 		gaugeAppsWithRoutingTag.WithLabelValues(droveConfig.Name).Set(float64(len(appsWithRoutingTag)))
 		gaugeAppsWithoutRoutingTag.WithLabelValues(droveConfig.Name).Set(float64(len(appsWithoutRoutingTag)))
 		// Update StatsD gauges for routing tags
-		statsGaugeVec("apps_with_routing_tag_total", float64(len(appsWithRoutingTag)), droveConfig.Name)
-		statsGaugeVec("apps_without_routing_tag_total", float64(len(appsWithoutRoutingTag)), droveConfig.Name)
 	}
 
 	// Log the cumulative results for realm mismatches
@@ -571,7 +563,6 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 		}).Debug("Hosts ignored due to realm mismatch summary")
 	}
 	gaugeAppsIgnoredByRealm.WithLabelValues(droveConfig.Name).Set(float64(len(hostsIgnoredByRealm)))
-	statsGaugeVec("apps_ignored_by_realm_total", float64(len(hostsIgnoredByRealm)), droveConfig.Name)
 
 	currentApps, er := db.ReadApps(droveConfig.Name)
 	if er != nil {
@@ -620,9 +611,7 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 				"error": err.Error(),
 			}).Error("unable to sync from drove")
 		}
-		go statsCount("reload.failed", 1)
 		go countDroveAppSyncErrors.WithLabelValues(namespace).Inc()
-		go statsCountVec("drove_app_sync_failed", 1, namespace)
 		return false
 	}
 	equal := syncAppsAndVhosts(droveConfig, &jsonapps, &vhosts)
@@ -639,7 +628,6 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 
 	elapsed := time.Since(start)
 	go observeAppRefreshTimeMetric(namespace, elapsed)
-	go statsTimingVec("app_refresh_duration_seconds", elapsed, namespace)
 	logger.WithFields(logrus.Fields{
 		"took": elapsed,
 	}).Debug("Apps update")
