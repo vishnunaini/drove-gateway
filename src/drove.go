@@ -477,7 +477,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 	var hostsIgnoredByRealm []string
 
 	for _, app := range jsonapps.Apps {
-		lowerVhost := strings.ToLower(app.Vhost)
+		app.Vhost = strings.ToLower(app.Vhost)
 		var newapp = App{}
 		for _, task := range app.Hosts {
 			var newtask = Host{}
@@ -488,13 +488,12 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 		}
 		// Lets ignore apps if no instances are available
 		if len(newapp.Hosts) > 0 {
-			var toAppend = matchingVhost(lowerVhost, realms) || (len(droveConfig.RealmSuffix) > 0 && strings.HasSuffix(lowerVhost, droveConfig.RealmSuffix))
+			var toAppend = matchingVhost(app.Vhost, realms) || (len(droveConfig.RealmSuffix) > 0 && strings.HasSuffix(app.Vhost, droveConfig.RealmSuffix))
 			if toAppend {
-				vhosts.Vhosts[lowerVhost] = true
-				newapp.ID = lowerVhost
-				newapp.Vhost = lowerVhost
-
-				var groupName = lowerVhost
+				vhosts.Vhosts[app.Vhost] = true
+				newapp.ID = app.Vhost
+				newapp.Vhost = app.Vhost
+				var groupName = app.Vhost
 				if len(droveConfig.RoutingTag) > 0 {
 					if tagValue, ok := app.Tags[droveConfig.RoutingTag]; ok && tagValue != "" {
 						// Collect apps that have the routing tag
@@ -511,7 +510,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 				hostGroup.Hosts = newapp.Hosts
 
 				newapp.Tags = app.Tags
-				if existingApp, ok := apps[lowerVhost]; ok {
+				if existingApp, ok := apps[app.Vhost]; ok {
 					newapp.Groups = existingApp.Groups
 					if existingGroup, ok := newapp.Groups[groupName]; ok {
 						existingGroup.Hosts = append(newapp.Hosts, existingGroup.Hosts...)
@@ -530,9 +529,9 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 					newapp.Groups = make(map[string]HostGroup)
 					newapp.Groups[groupName] = hostGroup
 				}
-				apps[lowerVhost] = newapp
+				apps[app.Vhost] = newapp
 			} else {
-				hostsIgnoredByRealm = append(hostsIgnoredByRealm, lowerVhost)
+				hostsIgnoredByRealm = append(hostsIgnoredByRealm, app.Vhost)
 			}
 		}
 	}
