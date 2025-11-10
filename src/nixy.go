@@ -130,6 +130,8 @@ var lastConfig string
 var db DataManager
 var logger = logrus.New()
 
+var Metrics NixyMetrics
+
 // set log level
 func setloglevel() {
 	logLevel := logrus.InfoLevel

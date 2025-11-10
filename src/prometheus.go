@@ -6,39 +6,70 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-const ns = "nixy"
+const ns = "drove_gateway"
 
-var (
-	countFailedReloads = prometheus.NewCounter(
+type NixyMetrics struct {
+	CountFailedReloads      prometheus.Counter
+	CountSuccessfulReloads  prometheus.Counter
+	HistogramReloadDuration prometheus.Histogram
+
+	CountInvalidSubdomainLabelWarnings    prometheus.Counter
+	CountDuplicateSubdomainLabelWarnings  *prometheus.CounterVec
+	CountEndpointCheckFails               *prometheus.CounterVec
+	CountEndpointDownErrors               *prometheus.CounterVec
+	GaugeAllEndpointsDown                 *prometheus.GaugeVec
+	CountDroveAppSyncErrors               *prometheus.CounterVec
+	CountDroveStreamErrors                *prometheus.CounterVec
+	CountDroveStreamNoDataWarnings        *prometheus.CounterVec
+	CountDroveEventsReceived              *prometheus.CounterVec
+	HistogramAppRefreshDuration           *prometheus.HistogramVec
+	GaugeAppsWithRoutingTag               *prometheus.GaugeVec
+	GaugeAppsWithoutRoutingTag            *prometheus.GaugeVec
+	GaugeAppsIgnoredByRealm               *prometheus.GaugeVec
+	HaproxyAPICallsSuccessful             *prometheus.CounterVec
+	HaproxyAPICallsFailed                 *prometheus.CounterVec
+	NginxAPICallsSuccessful               *prometheus.CounterVec
+	NginxAPICallsFailed                   *prometheus.CounterVec
+	GaugeConfiguredEndpoints              *prometheus.GaugeVec
+	GaugeHealthyEndpoints                 *prometheus.GaugeVec
+	HaproxyReconcileAllBackendsDuration   *prometheus.HistogramVec
+	NginxPlusReconcileAllBackendsDuration *prometheus.HistogramVec
+	TemplateRenderDuration                *prometheus.HistogramVec
+}
+
+func setupPrometheusMetrics() {
+	// Initialize metrics that depend on the proxy platform configuration.
+	Metrics.CountFailedReloads = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "reloads_failed",
-			Help:      "Total number of failed Nginx reloads",
+			Help:      "Total number of failed nginx reloads",
 		},
 	)
-	countSuccessfulReloads = prometheus.NewCounter(
+	Metrics.CountSuccessfulReloads = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "reloads_successful",
-			Help:      "Total number of successful Nginx reloads",
+			Help:      "Total number of successful nginx reloads",
 		},
 	)
-	histogramReloadDuration = prometheus.NewHistogram(
+	Metrics.HistogramReloadDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: ns,
 			Name:      "reload_duration",
-			Help:      "Nginx reload duration",
+			Help:      "nginx reload duration",
 			Buckets:   prometheus.ExponentialBuckets(0.05, 2, 10),
 		},
 	)
-	countInvalidSubdomainLabelWarnings = prometheus.NewCounter(
+
+	Metrics.CountInvalidSubdomainLabelWarnings = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "invalid_subdomain_label_warnings",
 			Help:      "Total number of warnings about invalid subdomain label",
 		},
 	)
-	countDuplicateSubdomainLabelWarnings = prometheus.NewCounterVec(
+	Metrics.CountDuplicateSubdomainLabelWarnings = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "duplicate_subdomain_label_warnings",
@@ -46,7 +77,7 @@ var (
 		},
 		[]string{"namespace"},
 	)
-	countEndpointCheckFails = prometheus.NewCounterVec(
+	Metrics.CountEndpointCheckFails = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "endpoint_check_fails",
@@ -54,7 +85,7 @@ var (
 		},
 		[]string{"namespace"},
 	)
-	countEndpointDownErrors = prometheus.NewCounterVec(
+	Metrics.CountEndpointDownErrors = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "endpoint_down_errors",
@@ -62,23 +93,23 @@ var (
 		},
 		[]string{"namespace"},
 	)
-	countAllEndpointsDownErrors = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
+	Metrics.GaugeAllEndpointsDown = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
 			Namespace: ns,
 			Name:      "all_endpoints_down_errors",
-			Help:      "Total number of all endpoints down errors",
+			Help:      "1 if all endpoints for a namespace are down, 0 otherwise",
 		},
 		[]string{"namespace"},
 	)
-	countDroveAppSyncErrors = prometheus.NewCounterVec(
+	Metrics.CountDroveAppSyncErrors = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "drove_app_sync_failed",
-			Help:      "Total number of failed Nginx reloads",
+			Help:      "Total number of failed Drove app syncs",
 		},
 		[]string{"namespace"},
 	)
-	countDroveStreamErrors = prometheus.NewCounterVec(
+	Metrics.CountDroveStreamErrors = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "drove_stream_errors",
@@ -86,7 +117,7 @@ var (
 		},
 		[]string{"namespace"},
 	)
-	countDroveStreamNoDataWarnings = prometheus.NewCounterVec(
+	Metrics.CountDroveStreamNoDataWarnings = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "drove_stream_no_data_warnings",
@@ -94,7 +125,7 @@ var (
 		},
 		[]string{"namespace"},
 	)
-	countDroveEventsReceived = prometheus.NewCounterVec(
+	Metrics.CountDroveEventsReceived = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "drove_events_received",
@@ -102,38 +133,149 @@ var (
 		},
 		[]string{"namespace"},
 	)
-	histogramAppRefereshDuration = prometheus.NewHistogramVec(
+	Metrics.HistogramAppRefreshDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: ns,
-			Name:      "drove_app_referesh_duration",
-			Help:      "Drove app referesh duration",
+			Name:      "drove_app_refresh_duration",
+			Help:      "Drove app refresh duration",
 			Buckets:   prometheus.ExponentialBuckets(0.05, 2, 10),
 		},
 		[]string{"namespace"},
 	)
-)
+	Metrics.GaugeAppsWithRoutingTag = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "apps_with_routing_tag_total",
+			Help:      "Total number of apps that have the configured routing tag.",
+		},
+		[]string{"namespace"},
+	)
+	Metrics.GaugeAppsWithoutRoutingTag = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "apps_without_routing_tag_total",
+			Help:      "Total number of apps that do not have the configured routing tag.",
+		},
+		[]string{"namespace"},
+	)
+	Metrics.GaugeAppsIgnoredByRealm = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "apps_ignored_by_realm_total",
+			Help:      "Total number of apps ignored due to realm mismatch",
+		},
+		[]string{"namespace"},
+	)
+	Metrics.HaproxyAPICallsSuccessful = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "haproxy_api_calls_successful_total",
+			Help:      "Total number of successful HAProxy API calls.",
+		},
+		[]string{"operation"},
+	)
+	Metrics.HaproxyAPICallsFailed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "haproxy_api_calls_failed_total",
+			Help:      "Total number of failed HAProxy API calls.",
+		},
+		[]string{"operation"},
+	)
+	Metrics.NginxAPICallsSuccessful = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "nginx_api_calls_successful_total",
+			Help:      "Total number of successful Nginx API calls.",
+		},
+		[]string{"operation"},
+	)
+	Metrics.NginxAPICallsFailed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "nginx_api_calls_failed_total",
+			Help:      "Total number of failed Nginx API calls.",
+		},
+		[]string{"operation"},
+	)
+	Metrics.GaugeConfiguredEndpoints = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "configured_endpoints_total",
+			Help:      "Total number of endpoints configured for a namespace.",
+		},
+		[]string{"namespace"},
+	)
+	Metrics.GaugeHealthyEndpoints = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "healthy_endpoints_total",
+			Help:      "Total number of healthy endpoints for a namespace.",
+		},
+		[]string{"namespace"},
+	)
+	Metrics.HaproxyReconcileAllBackendsDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "haproxy_runtime_api_duration_seconds",
+			Help:    "Duration of haproxyRuntimeAPI in seconds.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"result"},
+	)
+	Metrics.NginxPlusReconcileAllBackendsDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "nginx_plus_runtime_api_duration_seconds",
+			Help:    "Duration of nginxPlusRuntimeAPI in seconds.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"result"},
+	)
+	Metrics.TemplateRenderDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: ns,
+			Name:      "template_render_duration_seconds",
+			Help:      "Duration taken to render the config from template in seconds.",
+			Buckets:   prometheus.DefBuckets,
+		},
+		[]string{"result"},
+	)
 
-func setupPrometheusMetrics() {
-	prometheus.MustRegister(countFailedReloads)
-	prometheus.MustRegister(countSuccessfulReloads)
-	prometheus.MustRegister(histogramReloadDuration)
-	prometheus.MustRegister(countInvalidSubdomainLabelWarnings)
-	prometheus.MustRegister(countDuplicateSubdomainLabelWarnings)
-	prometheus.MustRegister(countEndpointCheckFails)
-	prometheus.MustRegister(countEndpointDownErrors)
-	prometheus.MustRegister(countAllEndpointsDownErrors)
-	prometheus.MustRegister(countDroveAppSyncErrors)
-	prometheus.MustRegister(countDroveStreamErrors)
-	prometheus.MustRegister(countDroveStreamNoDataWarnings)
-	prometheus.MustRegister(countDroveEventsReceived)
-	prometheus.MustRegister(histogramAppRefereshDuration)
+	prometheus.MustRegister(Metrics.CountFailedReloads)
+	prometheus.MustRegister(Metrics.CountSuccessfulReloads)
+	prometheus.MustRegister(Metrics.HistogramReloadDuration)
+	prometheus.MustRegister(Metrics.CountInvalidSubdomainLabelWarnings)
+	prometheus.MustRegister(Metrics.CountDuplicateSubdomainLabelWarnings)
+	prometheus.MustRegister(Metrics.CountEndpointCheckFails)
+	prometheus.MustRegister(Metrics.CountEndpointDownErrors)
+	prometheus.MustRegister(Metrics.GaugeAllEndpointsDown)
+	prometheus.MustRegister(Metrics.CountDroveAppSyncErrors)
+	prometheus.MustRegister(Metrics.CountDroveStreamErrors)
+	prometheus.MustRegister(Metrics.CountDroveStreamNoDataWarnings)
+	prometheus.MustRegister(Metrics.CountDroveEventsReceived)
+	prometheus.MustRegister(Metrics.HistogramAppRefreshDuration)
+	prometheus.MustRegister(Metrics.GaugeAppsWithRoutingTag)
+	prometheus.MustRegister(Metrics.GaugeAppsWithoutRoutingTag)
+	prometheus.MustRegister(Metrics.GaugeAppsIgnoredByRealm)
+	prometheus.MustRegister(Metrics.HaproxyAPICallsSuccessful)
+	prometheus.MustRegister(Metrics.HaproxyAPICallsFailed)
+	prometheus.MustRegister(Metrics.NginxAPICallsSuccessful)
+	prometheus.MustRegister(Metrics.NginxAPICallsFailed)
+	prometheus.MustRegister(Metrics.GaugeConfiguredEndpoints)
+	prometheus.MustRegister(Metrics.GaugeHealthyEndpoints)
+	prometheus.MustRegister(Metrics.HaproxyReconcileAllBackendsDuration)
+	prometheus.MustRegister(Metrics.NginxPlusReconcileAllBackendsDuration)
+	prometheus.MustRegister(Metrics.TemplateRenderDuration)
 
 }
 
 func observeReloadTimeMetric(e time.Duration) {
-	histogramReloadDuration.Observe(float64(e) / float64(time.Second))
+	Metrics.HistogramReloadDuration.Observe(float64(e) / float64(time.Second))
 }
 
-func observeAppRefreshTimeMetric(namesapece string, e time.Duration) {
-	histogramAppRefereshDuration.WithLabelValues(namesapece).Observe(float64(e) / float64(time.Second))
+func observeAppRefreshTimeMetric(namespace string, e time.Duration) {
+	Metrics.HistogramAppRefreshDuration.WithLabelValues(namespace).Observe(float64(e) / float64(time.Second))
+}
+
+func observeTemplateRenderTimeMetric(e time.Duration, result string) {
+	Metrics.TemplateRenderDuration.WithLabelValues(result).Observe(float64(e) / float64(time.Second))
 }

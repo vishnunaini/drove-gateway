@@ -154,7 +154,7 @@ func refreshLeaderData(namespace string) bool {
 	}
 	if endpoint == "" {
 		logger.Error("all endpoints are down")
-		go countAllEndpointsDownErrors.WithLabelValues(namespace).Inc()
+		Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(1)
 		return false
 	}
 	currentLeader, err := db.ReadLeader(namespace)
@@ -340,7 +340,7 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 				"endpoint":  es.Endpoint,
 				"namespace": namespace,
 			}).Error("endpoint is down")
-			go countEndpointDownErrors.WithLabelValues(namespace).Inc()
+			go Metrics.CountEndpointDownErrors.WithLabelValues(namespace).Inc()
 			health.NamespaceEndpoints[namespace][i].Healthy = false
 			health.NamespaceEndpoints[namespace][i].Message = err.Error()
 			continue
@@ -560,7 +560,7 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 				"error": err.Error(),
 			}).Error("unable to sync from drove")
 		}
-		go countDroveAppSyncErrors.WithLabelValues(namespace).Inc()
+		go Metrics.CountDroveAppSyncErrors.WithLabelValues(namespace).Inc()
 		return false
 	}
 	equal := syncAppsAndVhosts(droveConfig, &jsonapps, &vhosts)

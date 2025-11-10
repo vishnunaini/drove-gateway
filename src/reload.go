@@ -49,7 +49,7 @@ func reload() error {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to reload nginx config")
-			go countFailedReloads.Inc()
+			go Metrics.CountFailedReloads.Inc()
 			return err
 		}
 	} else {
@@ -78,7 +78,7 @@ func reload() error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to generate nginx config")
-		go countFailedReloads.Inc()
+		go Metrics.CountFailedReloads.Inc()
 		return err
 	}
 	elapsed := time.Since(start)
@@ -98,7 +98,7 @@ func updateAndReloadConfig(data *RenderingData) error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to generate nginx config")
-		go countFailedReloads.Inc()
+		go Metrics.CountFailedReloads.Inc()
 		return err
 	}
 	config.LastUpdates.LastConfigValid = time.Now()
@@ -107,13 +107,13 @@ func updateAndReloadConfig(data *RenderingData) error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to reload nginx")
-		go countFailedReloads.Inc()
+		go Metrics.CountFailedReloads.Inc()
 	} else {
 		elapsed := time.Since(start)
 		logger.WithFields(logrus.Fields{
 			"took": elapsed,
 		}).Debug("config updated and reloaded successfully")
-		go countSuccessfulReloads.Inc()
+		go Metrics.CountSuccessfulReloads.Inc()
 		go observeReloadTimeMetric(elapsed)
 		config.LastUpdates.LastNginxReload = time.Now()
 		db.UpdateLastKnownVhosts(vhosts)
