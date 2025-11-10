@@ -560,7 +560,6 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 				"error": err.Error(),
 			}).Error("unable to sync from drove")
 		}
-		go statsCount("reload.failed", 1)
 		go countDroveAppSyncErrors.WithLabelValues(namespace).Inc()
 		return false
 	}

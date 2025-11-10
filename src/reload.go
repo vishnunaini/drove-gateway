@@ -49,7 +49,6 @@ func reload() error {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to reload nginx config")
-			go statsCount("reload.failed", 1)
 			go countFailedReloads.Inc()
 			return err
 		}
@@ -79,7 +78,6 @@ func reload() error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to generate nginx config")
-		go statsCount("reload.failed", 1)
 		go countFailedReloads.Inc()
 		return err
 	}
@@ -100,7 +98,6 @@ func updateAndReloadConfig(data *RenderingData) error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to generate nginx config")
-		go statsCount("reload.failed", 1)
 		go countFailedReloads.Inc()
 		return err
 	}
@@ -110,15 +107,12 @@ func updateAndReloadConfig(data *RenderingData) error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to reload nginx")
-		go statsCount("reload.failed", 1)
 		go countFailedReloads.Inc()
 	} else {
 		elapsed := time.Since(start)
 		logger.WithFields(logrus.Fields{
 			"took": elapsed,
 		}).Debug("config updated and reloaded successfully")
-		go statsCount("reload.success", 1)
-		go statsTiming("reload.time", elapsed)
 		go countSuccessfulReloads.Inc()
 		go observeReloadTimeMetric(elapsed)
 		config.LastUpdates.LastNginxReload = time.Now()
