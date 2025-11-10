@@ -151,7 +151,7 @@ var date string        //set by ldflags
 var commit string      //set by ldflags
 var config = Config{LeftDelimiter: "{{", RightDelimiter: "}}"}
 var statsd g2s.Statter
-var health *Health
+var health Health
 var lastConfig string
 var db DataManager
 var logger = logrus.New()
@@ -215,29 +215,28 @@ var eventRefreshSignalQueue = make(chan bool, 2)
 // Global http transport for connection reuse
 var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 
-func newHealth() *Health {
-	h := &Health{}
-	h.NamespaceEndpoints = make(map[string][]EndpointStatus)
-	h.NamespaceHealth = make(map[string]NamespaceStatus)
-	h.UpstreamUpdatesViaAPI = Status{
+func newHealth() {
+	health.NamespaceEndpoints = make(map[string][]EndpointStatus)
+	health.NamespaceHealth = make(map[string]NamespaceStatus)
+	health.UpstreamUpdatesViaAPI = Status{
 		Healthy: false,
 		Message: "pending first check",
 	}
-	h.ResolverHealth = Status{
+	health.ResolverHealth = Status{
 		Healthy: true,
 		Message: "pending first check",
 	}
 	if ConfigReloadDisabled {
-		h.Config.Message = "Config Reload disabled"
-		h.Config.Healthy = true
-		h.Template.Message = "Templating disabled"
-		h.Template.Healthy = true
+		health.Config.Message = "Config Reload disabled"
+		health.Config.Healthy = true
+		health.Template.Message = "Templating disabled"
+		health.Template.Healthy = true
 	} else {
-		h.Config = Status{
+		health.Config = Status{
 			Healthy: false,
 			Message: "pending first check",
 		}
-		h.Template = Status{
+		health.Template = Status{
 			Healthy: false,
 			Message: "pending first check",
 		}
@@ -252,14 +251,13 @@ func newHealth() *Health {
 			s.Message = "OK"
 			e = append(e, s)
 		}
-		h.NamespaceEndpoints[nsConfig.Name] = e
-		h.NamespaceHealth[nsConfig.Name] = NamespaceStatus{
+		health.NamespaceEndpoints[nsConfig.Name] = e
+		health.NamespaceHealth[nsConfig.Name] = NamespaceStatus{
 			Namespace: nsConfig.Name,
 			Healthy:   false,
 			Message:   "pending first check",
 		}
 	}
-	return h
 }
 
 func setupDefaultConfig() {
@@ -387,7 +385,7 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Add("Content-Type", "application/json; charset=utf-8")
-	b, _ := json.MarshalIndent(health, "", "  ")
+	b, _ := json.MarshalIndent(&health, "", "  ")
 	w.Write(b)
 	return
 }
@@ -507,7 +505,7 @@ func main() {
 			Handler: mux,
 		}
 	}
-	health = newHealth()
+	newHealth()
 	setupEndpointHealth()
 	setupPollEvents()
 	reloadWorker() //Reloader
