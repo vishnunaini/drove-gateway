@@ -154,11 +154,11 @@ func refreshLeaderData(namespace string) bool {
 	}
 	if endpoint == "" {
 		logger.Error("all endpoints are down")
-		gaugeAllEndpointsDown.WithLabelValues(namespace).Set(1)
+		Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(1)
 		return false
 	}
 
-	gaugeAllEndpointsDown.WithLabelValues(namespace).Set(0)
+	Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(0)
 
 	currentLeader, err := db.ReadLeader(namespace)
 	if err != nil {
@@ -349,7 +349,7 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 				"endpoint":  es.Endpoint,
 				"namespace": namespace,
 			}).Error("endpoint is down")
-			go countEndpointDownErrors.WithLabelValues(namespace).Inc()
+			go Metrics.CountEndpointDownErrors.WithLabelValues(namespace).Inc()
 			health.NamespaceEndpoints[namespace][i].Healthy = false
 			health.NamespaceEndpoints[namespace][i].Message = err.Error()
 			continue
@@ -383,8 +383,8 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 	}
 	health.NamespaceHealth[namespace] = nsHealth
 
-	gaugeConfiguredEndpoints.WithLabelValues(namespace).Set(float64(configuredCount))
-	gaugeHealthyEndpoints.WithLabelValues(namespace).Set(float64(healthyCount))
+	Metrics.GaugeConfiguredEndpoints.WithLabelValues(namespace).Set(float64(configuredCount))
+	Metrics.GaugeHealthyEndpoints.WithLabelValues(namespace).Set(float64(healthyCount))
 }
 
 func endpointHealth(namespace string) {
@@ -548,8 +548,8 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 			"namespace":              droveConfig.Name,
 		}).Debug("Routing tag processing summary")
 		// Update Prometheus gauges for routing tags
-		gaugeAppsWithRoutingTag.WithLabelValues(droveConfig.Name).Set(float64(len(appsWithRoutingTag)))
-		gaugeAppsWithoutRoutingTag.WithLabelValues(droveConfig.Name).Set(float64(len(appsWithoutRoutingTag)))
+		Metrics.GaugeAppsWithRoutingTag.WithLabelValues(droveConfig.Name).Set(float64(len(appsWithRoutingTag)))
+		Metrics.GaugeAppsWithoutRoutingTag.WithLabelValues(droveConfig.Name).Set(float64(len(appsWithoutRoutingTag)))
 		// Update StatsD gauges for routing tags
 	}
 
@@ -562,7 +562,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 			"namespace":         droveConfig.Name,
 		}).Debug("Hosts ignored due to realm mismatch summary")
 	}
-	gaugeAppsIgnoredByRealm.WithLabelValues(droveConfig.Name).Set(float64(len(hostsIgnoredByRealm)))
+	Metrics.GaugeAppsIgnoredByRealm.WithLabelValues(droveConfig.Name).Set(float64(len(hostsIgnoredByRealm)))
 
 	currentApps, er := db.ReadApps(droveConfig.Name)
 	if er != nil {
@@ -611,7 +611,7 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 				"error": err.Error(),
 			}).Error("unable to sync from drove")
 		}
-		go countDroveAppSyncErrors.WithLabelValues(namespace).Inc()
+		go Metrics.CountDroveAppSyncErrors.WithLabelValues(namespace).Inc()
 		return false
 	}
 	equal := syncAppsAndVhosts(droveConfig, &jsonapps, &vhosts)

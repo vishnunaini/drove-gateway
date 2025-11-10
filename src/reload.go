@@ -93,7 +93,7 @@ func reload() error {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to reload " + config.ProxyPlatform + " config")
-			go countFailedReloads.Inc()
+			go Metrics.CountFailedReloads.Inc()
 			return err
 		}
 	} else {
@@ -145,32 +145,12 @@ func reload() error {
 			}
 		}
 		logger.Debug("Updating upstreams via " + config.ProxyPlatform + " api")
-		if config.ProxyPlatform == "nginx" {
-			nginxMgr, err := NewNginxAPIManager(config.Nginxplusapiaddr, time.Duration(config.apiTimeout)*time.Second, config.NginxMaxFailsUpstream, config.NginxFailTimeoutUpstream, config.NginxSlowStartUpstream)
+		if GlobalProxyManager != nil {
+			err = GlobalProxyManager.Reconcile(&data)
 			if err != nil {
 				logger.WithFields(logrus.Fields{
 					"error": err.Error(),
-				}).Error("unable to create nginx api manager")
-			} else {
-				err = nginxMgr.ReconcileAllVhosts(&data)
-				if err != nil {
-					logger.WithFields(logrus.Fields{
-						"error": err.Error(),
-					}).Error("unable to update upstreams via nginx plus api")
-				}
-			}
-		} else if config.ProxyPlatform == "haproxy" {
-			//For HAProxy, config is generated but not loaded even when reload is disabled as there is not other way to persist state across reloads
-			logger.Debug("HAProxy: Updating config without reload")
-			updateWithoutReloadConfig(&data)
-			// Create a context with a timeout for the API call.
-			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.apiTimeout)*time.Second)
-			defer cancel()
-			haproxyMgr, mgrErr := NewHaproxyManager(ctx, config.HaproxySocketAddr, config.HaproxyDisableLargeBackendCountOptimisation)
-			if mgrErr != nil {
-				err = mgrErr
-			} else {
-				err = haproxyMgr.ReconcileAllBackends(&data, config.HaproxyDisableLargeBackendCountOptimisation)
+				}).Error("unable to update upstreams via proxy manager api")
 			}
 		}
 
@@ -180,7 +160,7 @@ func reload() error {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to update upstreams via " + config.ProxyPlatform + " api")
-			go countFailedReloads.Inc()
+			go Metrics.CountFailedReloads.Inc()
 		} else {
 			updateHealthForUpstreamUpdateAPI(true, "OK")
 		}
@@ -189,7 +169,7 @@ func reload() error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to generate nginx config")
-		go countFailedReloads.Inc()
+		go Metrics.CountFailedReloads.Inc()
 		return err
 	}
 	elapsed := time.Since(start)
@@ -215,7 +195,7 @@ func updateWithoutReloadConfig(data *RenderingData) error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to generate " + config.ProxyPlatform + " config")
-		go countFailedReloads.Inc()
+		go Metrics.CountFailedReloads.Inc()
 		return err
 	}
 	config.LastUpdates.LastConfigValid = time.Now()
@@ -229,7 +209,7 @@ func updateAndReloadConfig(data *RenderingData, reloadDisabled bool, currentBack
 	vhosts := db.ReadAllKnownVhosts()
 	err := writeConf(data)
 	if err != nil {
-		go countFailedReloads.Inc()
+		go Metrics.CountFailedReloads.Inc()
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to write " + config.ProxyPlatform + " config")
@@ -248,11 +228,13 @@ func updateAndReloadConfig(data *RenderingData, reloadDisabled bool, currentBack
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to reload nginx")
-			go countFailedReloads.Inc()
+			go Metrics.CountFailedReloads.Inc()
 		} else {
 			elapsed := time.Since(start)
-			go countSuccessfulReloads.Inc()
-			go observeReloadTimeMetric(elapsed)
+			go Metrics.CountSuccessfulReloads.Inc()
+			go func() {
+				Metrics.HistogramReloadDuration.Observe(float64(elapsed) / float64(time.Second))
+			}()
 			config.LastUpdates.LastProxyProgramReload = time.Now()
 			db.UpdateLastKnownVhosts(vhosts)
 			db.UpdateLastKnownBackends(currentBackendNames)
@@ -352,6 +334,7 @@ func renderConfigFromTemplate(tmpl *template.Template, data *RenderingData, file
 	err := tmpl.Execute(file, data)
 	duration := time.Since(start)
 	resultLabel := "success"
+	Metrics.TemplateRenderDuration.WithLabelValues(resultLabel).Observe(float64(duration) / float64(time.Second))
 	if err != nil {
 		resultLabel = "error"
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -163,6 +164,16 @@ var ProgramCmd string
 var ConfigReloadDisabled bool
 var ProgramCmdConfFileArg string
 var ProgramCmdConfTestArg string
+
+var Metrics NixyMetrics
+
+// ProxyManager interface for runtime API managers
+type ProxyManager interface {
+	Reconcile(data *RenderingData) error
+}
+
+// Global proxy manager instance
+var GlobalProxyManager ProxyManager
 
 // set log level
 func setloglevel() {
@@ -395,6 +406,16 @@ func nixyVersion(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+// Implement ProxyManager interface for NginxAPIManager
+func (m *NginxAPIManager) Reconcile(data *RenderingData) error {
+	return m.ReconcileAllVhosts(data)
+}
+
+// Implement ProxyManager interface for HaproxyManager
+func (m *HaproxyManager) Reconcile(data *RenderingData) error {
+	return m.ReconcileAllBackends(data, config.HaproxyDisableLargeBackendCountOptimisation)
+}
+
 func main() {
 	configtoml := flag.String("f", "nixy.toml", "Path to config. (default nixy.toml)")
 	versionflag := flag.Bool("v", false, "prints current nixy version")
@@ -428,6 +449,35 @@ func main() {
 	setupDefaultConfig()
 	setupPrometheusMetrics()
 	setupDataManager()
+
+	// Conditionally initialize runtime API manager at startup
+	if config.ProxyPlatform == "nginx" && len(config.Nginxplusapiaddr) > 0 {
+		mgr, err := NewNginxAPIManager(
+			config.Nginxplusapiaddr,
+			time.Duration(config.apiTimeout)*time.Second,
+			config.NginxMaxFailsUpstream,
+			config.NginxFailTimeoutUpstream,
+			config.NginxSlowStartUpstream,
+		)
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"error": err.Error(),
+			}).Fatal("unable to create nginx api manager at startup; exiting nixy")
+		}
+		GlobalProxyManager = mgr
+		logger.Info("NginxAPIManager initialized at startup")
+	} else if config.ProxyPlatform == "haproxy" && len(config.HaproxySocketAddr) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.apiTimeout)*time.Second)
+		defer cancel()
+		mgr, err := NewHaproxyManager(ctx, config.HaproxySocketAddr, config.HaproxyDisableLargeBackendCountOptimisation)
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"error": err.Error(),
+			}).Fatal("unable to create haproxy manager at startup; exiting nixy")
+		}
+		GlobalProxyManager = mgr
+		logger.Info("HaproxyManager initialized at startup")
+	}
 	mux := mux.NewRouter()
 	mux.HandleFunc("/", nixyVersion)
 	mux.HandleFunc("/v1/reload", nixyReload)

@@ -52,7 +52,7 @@ func (m *HaproxyManager) ReconcileAllBackends(data *RenderingData, disableLargeB
 	var resultLabel string
 	defer func() {
 		duration := time.Since(start)
-		haproxyReconcileAllBackendsDuration.WithLabelValues(resultLabel).Observe(duration.Seconds())
+		Metrics.HaproxyReconcileAllBackendsDuration.WithLabelValues(resultLabel).Observe(duration.Seconds())
 	}()
 
 	// Aggregate all desired hosts for each unique backend from our configuration. We don't want to make excess API calls
@@ -116,10 +116,10 @@ func (m *HaproxyManager) ReconcileAllBackends(data *RenderingData, disableLargeB
 			logger.WithFields(logrus.Fields{
 				"error": err,
 			}).Error("Failed to get HAProxy servers state for all backends")
-			haproxyAPICallsFailed.WithLabelValues("get_servers_state_all_backends").Inc()
+			Metrics.HaproxyAPICallsFailed.WithLabelValues("get_servers_state_all_backends").Inc()
 			return fmt.Errorf("failed to get HAProxy servers state for all backends: %w", err)
 		}
-		haproxyAPICallsSuccessful.WithLabelValues("get_servers_state_all_backends").Inc()
+		Metrics.HaproxyAPICallsSuccessful.WithLabelValues("get_servers_state_all_backends").Inc()
 	}
 
 	for backend, hosts := range backendsToReconcile {
@@ -145,11 +145,11 @@ func (m *HaproxyManager) ReconcileAllBackends(data *RenderingData, disableLargeB
 				"backend": backend,
 				"error":   err,
 			}).Warning("Could not get servers for backend, it may be new. Proceeding with reconciliation.")
-			haproxyAPICallsFailed.WithLabelValues("get_servers_state").Inc()
+			Metrics.HaproxyAPICallsFailed.WithLabelValues("get_servers_state").Inc()
 			// Pass an empty slice so reconciliation can proceed to add servers.
 			currentServersForBackend = []*runtime_models.RuntimeServer{}
 		} else {
-			haproxyAPICallsSuccessful.WithLabelValues("get_servers_state").Inc()
+			Metrics.HaproxyAPICallsSuccessful.WithLabelValues("get_servers_state").Inc()
 		}
 
 		if err := m.reconcileBackend(backend, hosts, currentServersForBackend); err != nil {
@@ -271,18 +271,18 @@ func (m *HaproxyManager) removeStaleServers(backend string, currentServers []*ru
 		if _, exists := desiredServerMap[srv.Name]; !exists {
 			logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name}).Info("Disabling and deleting stale server")
 			if err := m.client.SetServerState(backend, srv.Name, "maint"); err != nil {
-				haproxyAPICallsFailed.WithLabelValues("set_server_state_maint").Inc()
+				Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_state_maint").Inc()
 				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to disable server")
 				errs = append(errs, fmt.Sprintf("disable %s: %v", srv.Name, err))
 			} else {
-				haproxyAPICallsSuccessful.WithLabelValues("set_server_state_maint").Inc()
+				Metrics.HaproxyAPICallsSuccessful.WithLabelValues("set_server_state_maint").Inc()
 			}
 			if err := m.client.DeleteServer(backend, srv.Name); err != nil {
-				haproxyAPICallsFailed.WithLabelValues("delete_server").Inc()
+				Metrics.HaproxyAPICallsFailed.WithLabelValues("delete_server").Inc()
 				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to delete server")
 				errs = append(errs, fmt.Sprintf("delete %s: %v", srv.Name, err))
 			} else {
-				haproxyAPICallsSuccessful.WithLabelValues("delete_server").Inc()
+				Metrics.HaproxyAPICallsSuccessful.WithLabelValues("delete_server").Inc()
 			}
 		}
 	}
@@ -338,18 +338,18 @@ func (m *HaproxyManager) addNewServer(backend, serverName string, host Host) err
 	}
 
 	if err := m.client.AddServer(backend, serverName, fmt.Sprintf("%s:%d %s", desiredIP, host.Port, attributes_string)); err != nil {
-		haproxyAPICallsFailed.WithLabelValues("add_server").Inc()
+		Metrics.HaproxyAPICallsFailed.WithLabelValues("add_server").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")
 		return err
 	}
-	haproxyAPICallsSuccessful.WithLabelValues("add_server").Inc()
+	Metrics.HaproxyAPICallsSuccessful.WithLabelValues("add_server").Inc()
 
 	if err := m.client.SetServerState(backend, serverName, "ready"); err != nil {
-		haproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
+		Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set new server state to ready")
 		return err
 	}
-	haproxyAPICallsSuccessful.WithLabelValues("set_server_state_ready").Inc()
+	Metrics.HaproxyAPICallsSuccessful.WithLabelValues("set_server_state_ready").Inc()
 	return nil
 }
 
@@ -373,27 +373,27 @@ func (m *HaproxyManager) updateExistingServer(backend, serverName string, host H
 	var errs []string
 
 	if err := m.client.SetServerAddr(backend, serverName, desiredIP, int(host.Port)); err != nil {
-		haproxyAPICallsFailed.WithLabelValues("set_server_addr").Inc()
+		Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_addr").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server address")
 		errs = append(errs, fmt.Sprintf("set address: %v", err))
 	} else {
-		haproxyAPICallsSuccessful.WithLabelValues("set_server_addr").Inc()
+		Metrics.HaproxyAPICallsSuccessful.WithLabelValues("set_server_addr").Inc()
 	}
 
 	if err := m.client.SetServerHealth(backend, serverName, "up"); err != nil {
-		haproxyAPICallsFailed.WithLabelValues("set_server_health_up").Inc()
+		Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_health_up").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server health to up")
 		errs = append(errs, fmt.Sprintf("set health: %v", err))
 	} else {
-		haproxyAPICallsSuccessful.WithLabelValues("set_server_health_up").Inc()
+		Metrics.HaproxyAPICallsSuccessful.WithLabelValues("set_server_health_up").Inc()
 	}
 
 	if err := m.client.SetServerState(backend, serverName, "ready"); err != nil {
-		haproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
+		Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server state to ready")
 		errs = append(errs, fmt.Sprintf("set state: %v", err))
 	} else {
-		haproxyAPICallsSuccessful.WithLabelValues("set_server_state_ready").Inc()
+		Metrics.HaproxyAPICallsSuccessful.WithLabelValues("set_server_state_ready").Inc()
 	}
 
 	if len(errs) > 0 {
