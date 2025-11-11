@@ -166,7 +166,7 @@ var ConfigReloadDisabled bool
 var ProgramCmdConfFileArg string
 var ProgramCmdConfTestArg string
 
-var Metrics NixyMetrics
+var Metrics DroveGatewayPrometheusMetrics
 
 // ProxyManager interface for runtime API managers
 type ProxyManager interface {

@@ -8,7 +8,7 @@ import (
 
 const ns = "drove_gateway"
 
-type NixyMetrics struct {
+type DroveGatewayPrometheusMetrics struct {
 	CountFailedReloads      prometheus.Counter
 	CountSuccessfulReloads  prometheus.Counter
 	HistogramReloadDuration prometheus.Histogram
