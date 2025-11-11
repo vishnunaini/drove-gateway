@@ -414,7 +414,7 @@ func isHTTPHostGroup(hosts []Host) bool {
 }
 
 func resolveWithIPFallback(hostname string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.DnsResolutionTimeoutSec)*time.Second)
 	defer cancel()
 	ip, err := resolveHostnameToIP(ctx, hostname)
 	if err != nil {

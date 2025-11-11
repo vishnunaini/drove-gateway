@@ -102,6 +102,7 @@ type Config struct {
 	NginxFailTimeoutUpstream                    string           `json:"fail_timeout,omitempty"`
 	NginxSlowStartUpstream                      string           `json:"slow_start,omitempty"`
 	LogLevel                                    string           `json:"-" toml:"loglevel"`
+	DnsResolutionTimeoutSec                     int              `json:"-" toml:"dns_resolution_timeout_sec"`
 	apiTimeout                                  int              `json:"-" toml:"api_timeout"`
 	LastUpdates                                 Updates
 }
@@ -276,6 +277,10 @@ func setupDefaultConfig() {
 		config.apiTimeout = 10
 	}
 
+	if config.DnsResolutionTimeoutSec <= 0 {
+		config.DnsResolutionTimeoutSec = 2
+	}
+
 	//default proxyplatform as nginx
 	if config.ProxyPlatform == "" {
 		config.ProxyPlatform = "nginx"
@@ -380,7 +385,7 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// the health is set by the respective workers, we just read it here.
-	if health.Template.Healthy == false || health.Config.Healthy == false || health.ResolverHealth.Healthy == false || !health.UpstreamUpdatesViaAPI.Healthy || anyNamespaceDown {
+	if !health.Template.Healthy || !health.Config.Healthy || !health.ResolverHealth.Healthy || !health.UpstreamUpdatesViaAPI.Healthy || anyNamespaceDown {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 

@@ -80,7 +80,6 @@ func (m *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 						"hostname": t.Host,
 					}).Error("dns lookup failed, skipping the hostname")
 					reconciliationFailedApps[app.Vhost] = true
-					updateHealthForUpstreamUpdateAPI(false, err.Error())
 					continue
 				}
 				hostAndPortMapping := fmt.Sprintf("%s:%d", ipRecord, t.Port)
@@ -131,7 +130,6 @@ func (m *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 					case <-ctx.Done():
 						err = fmt.Errorf("context timeout waiting for upstream '%s' to exist", upstreamtocheck)
 						logger.WithError(err).Error("Failed to confirm upstream creation")
-						updateHealthForUpstreamUpdateAPI(false, err.Error())
 						break
 					default:
 						time.Sleep(5 * time.Millisecond)
