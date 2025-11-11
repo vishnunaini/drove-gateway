@@ -100,11 +100,13 @@ func fetchRecentEvents(httpClient *http.Client, syncPoint *CurrSyncPoint, namesp
 	for _, es := range health.NamespaceEndpoints[namespace] {
 		if es.Healthy {
 			endpoint = es.Endpoint
+			Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(0)
 			break
 		}
 	}
 	if endpoint == "" {
 		err := errors.New("all endpoints are down")
+		Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(1)
 		return nil, err
 	}
 
@@ -149,6 +151,7 @@ func refreshLeaderData(namespace string) bool {
 	for _, es := range health.NamespaceEndpoints[namespace] {
 		if es.Namespace == namespace && es.Healthy {
 			endpoint = es.Endpoint
+			Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(0)
 			break
 		}
 	}

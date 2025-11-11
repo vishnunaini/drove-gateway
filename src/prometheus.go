@@ -8,7 +8,7 @@ import (
 
 const ns = "drove_gateway"
 
-type NixyMetrics struct {
+type DroveGatewayPrometheusMetrics struct {
 	CountFailedReloads      prometheus.Counter
 	CountSuccessfulReloads  prometheus.Counter
 	HistogramReloadDuration prometheus.Histogram
@@ -43,21 +43,21 @@ func setupPrometheusMetrics() {
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "reloads_failed",
-			Help:      "Total number of failed nginx reloads",
+			Help:      "Total number of failed nginx/haproxy proxy reloads",
 		},
 	)
 	Metrics.CountSuccessfulReloads = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "reloads_successful",
-			Help:      "Total number of successful nginx reloads",
+			Help:      "Total number of successful nginx/haproxy proxy reloads",
 		},
 	)
 	Metrics.HistogramReloadDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: ns,
 			Name:      "reload_duration",
-			Help:      "nginx reload duration",
+			Help:      "nginx/haproxy proxy reload duration",
 			Buckets:   prometheus.ExponentialBuckets(0.05, 2, 10),
 		},
 	)

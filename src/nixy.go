@@ -130,7 +130,7 @@ var lastConfig string
 var db DataManager
 var logger = logrus.New()
 
-var Metrics NixyMetrics
+var Metrics DroveGatewayPrometheusMetrics
 
 // set log level
 func setloglevel() {
