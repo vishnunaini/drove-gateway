@@ -87,6 +87,7 @@ type Config struct {
 	SlowStartUpstream       string           `json:"slow_start,omitempty"`
 	LogLevel                string           `json:"-" toml:"loglevel"`
 	apiTimeout              int              `json:"-" toml:"api_timeout"`
+	DnsResolutionTimeoutSec int              `json:"-" toml:"dns_resolution_timeout_sec"`
 	Statsd                  StatsdConfig
 	LastUpdates             Updates
 }
@@ -222,6 +223,10 @@ func setupDefaultConfig() {
 	if config.apiTimeout <= 0 {
 		config.apiTimeout = 10
 	}
+
+	if config.DnsResolutionTimeoutSec <= 0 {
+		config.DnsResolutionTimeoutSec = 2
+	}
 }
 
 func validateConfig() error {
@@ -267,7 +272,7 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// the health is set by the respective workers, we just read it here.
-	if health.Template.Healthy == false || health.Config.Healthy == false || !health.UpstreamUpdatesViaAPI.Healthy || anyNamespaceDown {
+	if !health.Template.Healthy || !health.Config.Healthy || !health.UpstreamUpdatesViaAPI.Healthy || anyNamespaceDown {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 
