@@ -135,7 +135,7 @@ var date string        //set by ldflags
 var commit string      //set by ldflags
 var config = Config{LeftDelimiter: "{{", RightDelimiter: "}}"}
 var statsd g2s.Statter
-var health *Health
+var health Health
 var lastConfig string
 var db DataManager
 var logger = logrus.New()
@@ -179,18 +179,17 @@ var eventRefreshSignalQueue = make(chan bool, 2)
 // Global http transport for connection reuse
 var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 
-func newHealth() *Health {
-	h := &Health{}
-	h.NamespaceEndpoints = make(map[string][]EndpointStatus)
-	h.UpstreamUpdatesViaAPI = Status{
+func newHealth() {
+	health.NamespaceEndpoints = make(map[string][]EndpointStatus)
+	health.UpstreamUpdatesViaAPI = Status{
 		Healthy: false,
 		Message: "pending first check",
 	}
-	h.Config = Status{
+	health.Config = Status{
 		Healthy: false,
 		Message: "pending first check",
 	}
-	h.Template = Status{
+	health.Template = Status{
 		Healthy: false,
 		Message: "pending first check",
 	}
@@ -204,9 +203,8 @@ func newHealth() *Health {
 			s.Message = "OK"
 			e = append(e, s)
 		}
-		h.NamespaceEndpoints[nsConfig.Name] = e
+		health.NamespaceEndpoints[nsConfig.Name] = e
 	}
-	return h
 }
 
 func setupDefaultConfig() {
@@ -274,7 +272,7 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Add("Content-Type", "application/json; charset=utf-8")
-	b, _ := json.MarshalIndent(health, "", "  ")
+	b, _ := json.MarshalIndent(&health, "", "  ")
 	w.Write(b)
 	return
 }
@@ -362,7 +360,7 @@ func main() {
 			Handler: mux,
 		}
 	}
-	health = newHealth()
+	newHealth()
 	setupEndpointHealth()
 	setupPollEvents()
 	reloadWorker() //Reloader
