@@ -158,7 +158,7 @@ var db DataManager
 var logger = logrus.New()
 
 var ConfigPath string
-var TemplatePath string
+var templatePath string
 var ReloadCmd string
 var IgnoreCheck bool
 var ProgramCmd string
@@ -289,7 +289,7 @@ func setupDefaultConfig() {
 	//set proxy platform parameters
 	if config.ProxyPlatform == "nginx" {
 		ConfigPath = config.NginxConfig
-		TemplatePath = config.NginxTemplate
+		templatePath = config.NginxTemplate
 		ReloadCmd = config.NginxCmd
 		ProgramCmd = config.NginxCmd
 		IgnoreCheck = config.NginxIgnoreCheck
@@ -298,7 +298,7 @@ func setupDefaultConfig() {
 		ProgramCmdConfTestArg = "-t"
 	} else if config.ProxyPlatform == "haproxy" {
 		ConfigPath = config.HaproxyConfig
-		TemplatePath = config.HaproxyTemplate
+		templatePath = config.HaproxyTemplate
 		ReloadCmd = config.HaproxyReloadCmd
 		ProgramCmd = config.HaproxyCmd
 		IgnoreCheck = config.HaproxyIgnoreCheck

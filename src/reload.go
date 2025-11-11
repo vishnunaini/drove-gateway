@@ -42,6 +42,10 @@ type RenderingData struct {
 	Apps                                  map[string]App
 }
 
+var tmplCache *template.Template
+var tmplCacheErr error
+var tmplCacheOnce sync.Once
+
 func reload() error {
 	start := time.Now()
 	var err error
@@ -345,7 +349,7 @@ func writeConf(data *RenderingData) error {
 	config.RLock()
 	defer config.RUnlock()
 
-	template, err := getTmpl(TemplatePath)
+	template, err := getTmpl(templatePath)
 	if err != nil {
 		return err
 	}
@@ -483,10 +487,6 @@ func generateStableHaproxyServerName(host Host) string {
 	sanitizer := strings.NewReplacer(":", config.HaproxyServerNameHostPortSeparator)
 	return fmt.Sprintf("%s%s%s%s%d", config.HaproxyServerNamePrefix, config.HaproxyServerNameHostPortSeparator, sanitizer.Replace(host.Host), config.HaproxyServerNameHostPortSeparator, host.Port)
 }
-
-var tmplCache *template.Template
-var tmplCacheErr error
-var tmplCacheOnce sync.Once
 
 func getTmpl(proxyTemplatePath string) (*template.Template, error) {
 	tmplCacheOnce.Do(func() {
