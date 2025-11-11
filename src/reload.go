@@ -37,6 +37,10 @@ type RenderingData struct {
 	Apps                map[string]App
 }
 
+var tmplCache *template.Template
+var tmplCacheErr error
+var tmplCacheOnce sync.Once
+
 func reload() error {
 	start := time.Now()
 	var err error
@@ -397,17 +401,13 @@ func checkTmpl() error {
 	return nil
 }
 
-var tmplCache *template.Template
-var tmplCacheErr error
-var tmplCacheOnce sync.Once
-
 func getTmpl() (*template.Template, error) {
-	TemplatePath := config.NginxTemplate
+	templatePath := config.NginxTemplate
 	tmplCacheOnce.Do(func() {
 		logger.WithFields(logrus.Fields{
-			"file": TemplatePath,
+			"file": templatePath,
 		}).Info("Reading template")
-		tmplCache, tmplCacheErr = template.New(filepath.Base(TemplatePath)).
+		tmplCache, tmplCacheErr = template.New(filepath.Base(templatePath)).
 			Delims(config.LeftDelimiter, config.RightDelimiter).
 			Funcs(template.FuncMap{
 				"hasPrefix": strings.HasPrefix,
@@ -421,15 +421,15 @@ func getTmpl() (*template.Template, error) {
 				"getenv":    os.Getenv,
 				"datetime":  time.Now,
 			}).
-			ParseFiles(TemplatePath)
+			ParseFiles(templatePath)
 		if tmplCacheErr != nil {
 			logger.WithFields(logrus.Fields{
 				"error": tmplCacheErr,
-				"file":  TemplatePath,
+				"file":  templatePath,
 			}).Error("unable to read template")
 		} else {
 			logger.WithFields(logrus.Fields{
-				"file": TemplatePath,
+				"file": templatePath,
 			}).Info("Template read successfully")
 		}
 	})
