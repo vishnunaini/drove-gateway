@@ -433,7 +433,7 @@ func matchingVhost(vHost string, realms []string) bool {
 	return false
 }
 
-// vhosts should be case insensitive as per standards. altough nginx is case insetive, some other proxies like haproxy are not as they expect upstreams to handle it.
+// vhosts should be case insensitive as per standards. altough nginx is case insensitive, some other proxies like haproxy are not as they expect upstreams to handle it.
 // Also ensure routing tag values are grouped case insensitively.
 func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vhosts) bool {
 	config.Lock()
