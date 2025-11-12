@@ -284,7 +284,7 @@ func resolveHostnameToIP(ctx context.Context, hostname string) (string, error) {
 func UnmarshalServerStructs(servers []nplus.UpstreamServer) string {
 	jsonData := []string{}
 	for _, server := range servers {
-		jsonData = append(jsonData, m.UnmarshalServerStruct(server))
+		jsonData = append(jsonData, UnmarshalServerStruct(server))
 	}
 	return fmt.Sprintf("[" + strings.Join(jsonData, ",") + "]")
 }
