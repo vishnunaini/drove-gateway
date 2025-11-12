@@ -155,18 +155,14 @@ func reload() error {
 				logger.WithFields(logrus.Fields{
 					"error": err.Error(),
 				}).Error("unable to update upstreams via proxy manager api")
+				updateHealthForUpstreamUpdateAPI(false, err.Error())
+				logger.WithFields(logrus.Fields{
+					"error": err.Error(),
+				}).Error("unable to update upstreams via " + config.ProxyPlatform + " api")
+				go Metrics.CountFailedReloads.Inc()
+			} else {
+				updateHealthForUpstreamUpdateAPI(true, "OK")
 			}
-		}
-
-		// Update health status based on the result of the API call
-		if err != nil {
-			updateHealthForUpstreamUpdateAPI(false, err.Error())
-			logger.WithFields(logrus.Fields{
-				"error": err.Error(),
-			}).Error("unable to update upstreams via " + config.ProxyPlatform + " api")
-			go Metrics.CountFailedReloads.Inc()
-		} else {
-			updateHealthForUpstreamUpdateAPI(true, "OK")
 		}
 	}
 	if err != nil {

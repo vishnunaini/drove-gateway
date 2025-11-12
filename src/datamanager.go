@@ -57,14 +57,14 @@ type DataManager struct {
 
 // NewDataManager creates a new instance of DataManager
 func NewDataManager(inXproxy string, inProxyPlatform string, inLeftDelimiter string, inRightDelimiter string,
-	inMaxFailsUpstream *int, inFailTimeoutUpstream string, inSlowStartUpstream string, inHaproxyAddServerAttributesString string, inHaproxyAddServerSSLAttributesString string,
+	inMaxFailsUpstream int, inFailTimeoutUpstream string, inSlowStartUpstream string, inHaproxyAddServerAttributesString string, inHaproxyAddServerSSLAttributesString string,
 	inHaproxyServerNamePrefix string, inHaproxyServerNameHostPortSeparator string, inHaproxyBackendNameSeparator string, inHaproxyBackendIncludeRoutingTagSuffix bool) *DataManager {
 	emptyLastKnownVhosts := Vhosts{}
 	emptyLastKnownVhosts.Vhosts = make(map[string]bool)
 	return &DataManager{
 		namespaces: make(map[string]NamespaceData),
 		StaticData: StaticConfig{Xproxy: inXproxy, ProxyPlatform: inProxyPlatform, LeftDelimiter: inLeftDelimiter, RightDelimiter: inRightDelimiter,
-			MaxFailsUpstream: inMaxFailsUpstream, FailTimeoutUpstream: inFailTimeoutUpstream, SlowStartUpstream: inSlowStartUpstream,
+			MaxFailsUpstream: &inMaxFailsUpstream, FailTimeoutUpstream: inFailTimeoutUpstream, SlowStartUpstream: inSlowStartUpstream,
 			HaproxyAddServerAttributesString: inHaproxyAddServerAttributesString, HaproxyAddServerSSLAttributesString: inHaproxyAddServerSSLAttributesString,
 			HaproxyServerNamePrefix: inHaproxyServerNamePrefix, HaproxyServerNameHostPortSeparator: inHaproxyServerNameHostPortSeparator,
 			HaproxyBackendNameSeparator: inHaproxyBackendNameSeparator, HaproxyBackendIncludeRoutingTagSuffix: inHaproxyBackendIncludeRoutingTagSuffix},

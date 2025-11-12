@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sync"
 	"time"
 
@@ -98,9 +99,12 @@ type Config struct {
 	HaproxyAddServerSSLAttributesString         string           `json:"-" toml:"haproxy_add_server_ssl_attributes_string"`
 	LeftDelimiter                               string           `json:"-" toml:"left_delimiter"`
 	RightDelimiter                              string           `json:"-" toml:"right_delimiter"`
-	NginxMaxFailsUpstream                       *int             `json:"max_fails,omitempty"`
-	NginxFailTimeoutUpstream                    string           `json:"fail_timeout,omitempty"`
-	NginxSlowStartUpstream                      string           `json:"slow_start,omitempty"`
+	NginxMaxFailsUpstream                       int              `json:"_" toml:"nginx_max_fails"`
+	NginxFailTimeoutUpstream                    string           `json:"_" toml:"nginx_fail_timeout"`
+	NginxSlowStartUpstream                      string           `json:"_" toml:"nginx_slow_start"`
+	NginxMaxFailsUpstreamCompatibility          *int             `json:"-" toml:"maxfailsupstream,omitempty"`
+	NginxFailTimeoutUpstreamCompatibility       *string          `json:"-" toml:"failtimeoutupstream,omitempty"`
+	NginxSlowStartUpstreamCompatibility         *string          `json:"-" toml:"slowstartupstream,omitempty"`
 	LogLevel                                    string           `json:"-" toml:"loglevel"`
 	DnsResolutionTimeoutSec                     int              `json:"-" toml:"dns_resolution_timeout_sec"`
 	apiTimeout                                  int              `json:"-" toml:"api_timeout"`
@@ -296,6 +300,30 @@ func setupDefaultConfig() {
 		ConfigReloadDisabled = config.NginxReloadDisabled
 		ProgramCmdConfFileArg = "-c"
 		ProgramCmdConfTestArg = "-t"
+		//default NginxMaxFailsUpstream is 0 as omitempty is not present
+		//Older versions of nixy used different naming for these parameters, so we support both for backward compatibility
+		if config.NginxMaxFailsUpstreamCompatibility != nil {
+			config.NginxMaxFailsUpstream = *config.NginxMaxFailsUpstreamCompatibility
+			logger.Warn("maxfailsupstream is deprecated, please use nginx_max_fails instead")
+		}
+		if config.NginxFailTimeoutUpstreamCompatibility != nil {
+			config.NginxFailTimeoutUpstream = *config.NginxFailTimeoutUpstreamCompatibility
+			logger.Warn("failtimeoutupstream is deprecated, please use nginx_fail_timeout instead")
+		}
+		if config.NginxSlowStartUpstreamCompatibility != nil {
+			config.NginxSlowStartUpstream = *config.NginxSlowStartUpstreamCompatibility
+			logger.Warn("slowstartupstream is deprecated, please use nginx_slow_start instead")
+		}
+		if config.NginxFailTimeoutUpstream == "" || !regexp.MustCompile(`^\d+s$`).MatchString(config.NginxFailTimeoutUpstream) {
+			logger.Error("Invalid input to failtimeoutupstream " + config.NginxFailTimeoutUpstream)
+			config.NginxFailTimeoutUpstream = "0s"
+			logger.Error("Invalid input to failtimeoutupstream, defaulting to " + config.NginxFailTimeoutUpstream)
+		}
+		if config.NginxSlowStartUpstream == "" || !regexp.MustCompile(`^\d+s$`).MatchString(config.NginxSlowStartUpstream) {
+			config.NginxSlowStartUpstream = "0s"
+			logger.Error("Invalid input to slowstartupstream, defaulting to " + config.NginxSlowStartUpstream)
+		}
+		logger.WithFields(logrus.Fields{"max_fails": config.NginxMaxFailsUpstream, "fail_timeout": config.NginxFailTimeoutUpstream, "slow_start": config.NginxSlowStartUpstream}).Debug("Nginx upstream healthcheck parameters set")
 	} else if config.ProxyPlatform == "haproxy" {
 		ConfigPath = config.HaproxyConfig
 		templatePath = config.HaproxyTemplate
