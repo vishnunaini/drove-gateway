@@ -49,13 +49,13 @@ type DataManager struct {
 
 // NewDataManager creates a new instance of DataManager
 func NewDataManager(inXproxy string, inLeftDelimiter string, inRightDelimiter string,
-	inMaxFailsUpstream *int, inFailTimeoutUpstream string, inSlowStartUpstream string) *DataManager {
+	inMaxFailsUpstream int, inFailTimeoutUpstream string, inSlowStartUpstream string) *DataManager {
 	empltyLastKnownVhosts := Vhosts{}
 	empltyLastKnownVhosts.Vhosts = make(map[string]bool)
 	return &DataManager{
 		namespaces: make(map[string]NamespaceData),
 		StaticData: StaticConfig{Xproxy: inXproxy, LeftDelimiter: inLeftDelimiter, RightDelimiter: inRightDelimiter,
-			MaxFailsUpstream: inMaxFailsUpstream, FailTimeoutUpstream: inFailTimeoutUpstream, SlowStartUpstream: inSlowStartUpstream},
+			MaxFailsUpstream: &inMaxFailsUpstream, FailTimeoutUpstream: inFailTimeoutUpstream, SlowStartUpstream: inSlowStartUpstream},
 		LastKnownVhosts: empltyLastKnownVhosts, LastReloadTimestamp: time.Now(),
 	}
 }

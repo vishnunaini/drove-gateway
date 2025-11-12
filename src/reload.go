@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -280,6 +281,25 @@ func resolveHostnameToIP(ctx context.Context, hostname string) (string, error) {
 	return ips[0], nil
 }
 
+func UnmarshalServerStructs(servers []nplus.UpstreamServer) string {
+	jsonData := []string{}
+	for _, server := range servers {
+		jsonData = append(jsonData, m.UnmarshalServerStruct(server))
+	}
+	return fmt.Sprintf("[" + strings.Join(jsonData, ",") + "]")
+}
+
+func UnmarshalServerStruct(server nplus.UpstreamServer) string {
+	jsonData, err := json.Marshal(server)
+	if err != nil {
+		logger.WithFields(logrus.Fields{
+			"error": err,
+		}).Error("unable to marshal upstream server struct")
+		return ""
+	}
+	return fmt.Sprintf("%s", jsonData)
+}
+
 func nginxPlus(data *RenderingData) error {
 	//Current implementation only updates AppVhosts, does not suppport routing tag & LeaderVhost
 	config.RLock()
@@ -348,7 +368,7 @@ func nginxPlus(data *RenderingData) error {
 		var finalformattedServers []nplus.UpstreamServer
 
 		for _, server := range newFormattedServers {
-			formattedServer := nplus.UpstreamServer{Server: server, MaxFails: config.MaxFailsUpstream, FailTimeout: config.FailTimeoutUpstream, SlowStart: config.SlowStartUpstream}
+			formattedServer := nplus.UpstreamServer{Server: server, MaxFails: &config.MaxFailsUpstream, FailTimeout: config.FailTimeoutUpstream, SlowStart: config.SlowStartUpstream}
 			finalformattedServers = append(finalformattedServers, formattedServer)
 		}
 		// If upstream has no servers, UpdateHTTPServers returns error as in-line GetHTTPServers returns error. server ID 0 needs to be explicitly initiated by a PATCH
@@ -358,49 +378,70 @@ func nginxPlus(data *RenderingData) error {
 			logger.WithFields(logrus.Fields{
 				"Adding fresh upstream for": upstreamtocheck,
 			}).Info("Adding first server for upstream")
+			if len(finalformattedServers) == 0 {
+				logger.WithFields(logrus.Fields{
+					"vhost": upstreamtocheck,
+				}).Warn("No servers to add for new upstream")
+				continue
+			}
 			//Adding first server for server ID 0. ID 0 needs to be updated if state file is resurrected when a vhost gets resurrected. Create ID 0 otherwise.
-			error := nginxClient.UpdateHTTPServer(upstreamtocheck, finalformattedServers[0])
-
+			err := nginxClient.UpdateHTTPServer(upstreamtocheck, finalformattedServers[0])
+			logger.WithFields(logrus.Fields{"Adding upstream": UnmarshalServerStruct(finalformattedServers[0]), "vhost": upstreamtocheck}).Debug("Adding first upstream server")
 			// Now upstream should have servers, update earlier state to let UpdateHTTPServers take over
 			//But wait from some time for nginx to actually update it's state. Consecutive calls would still return a 404 if you don't wait long enough
-			if error != nil {
+			if err != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 				defer cancel()
 				err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
-			waitLoop:
 				for err != nil {
 					select {
 					case <-ctx.Done():
 						err = fmt.Errorf("context timeout waiting for upstream '%s' to exist", upstreamtocheck)
 						logger.WithError(err).Error("Failed to confirm upstream creation")
-						break waitLoop
+						break
 					default:
 						time.Sleep(5 * time.Millisecond)
 						err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
+						if err == nil {
+							break
+						}
 					}
 				}
+				cancel()
+				if err != nil {
+					logger.Error("unable to add initial server to new upstream: ", err)
+					reconciliationFailedApps[app.Vhost] = true
+					updateHealthForUpstreamUpdateAPI(false, err.Error())
+					continue
+				}
+			} else {
+				logger.WithFields(logrus.Fields{
+					"Added fresh upstream for": upstreamtocheck,
+					"upstream":                 finalformattedServers[0].Server,
+				}).Warn("Successfully added first server for new upstream")
 			}
 
 		}
 		if err == nil {
+			logger.WithFields(logrus.Fields{"updating UpdateHTTPServers for": upstreamtocheck}).Debug("upstream exists, updating servers")
 			added, deleted, updated, error := nginxClient.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
 
 			if added != nil {
 				logger.WithFields(logrus.Fields{
 					"vhost":           upstreamtocheck,
-					"upstreams added": added,
+					"upstreams added": UnmarshalServerStructs(added),
 				}).Info("nginx upstreams added")
 			}
 			if deleted != nil {
 				logger.WithFields(logrus.Fields{
 					"vhost":             upstreamtocheck,
-					"upstreams deleted": deleted,
+					"upstreams deleted": UnmarshalServerStructs(deleted),
 				}).Info("nginx upstreams deleted")
 			}
 			if updated != nil {
 				logger.WithFields(logrus.Fields{
 					"vhost":             upstreamtocheck,
-					"upstreams updated": updated,
+					"upstreams updated": UnmarshalServerStructs(updated),
 				}).Info("nginx upstreams updated")
 			}
 			if error != nil {

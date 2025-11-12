@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sync"
 	"time"
 
@@ -66,30 +67,33 @@ type DroveNamespace struct {
 // Config struct used by the template engine
 type Config struct {
 	sync.RWMutex
-	Xproxy                  string
-	Address                 string           `json:"-"`
-	Port                    string           `json:"-"`
-	PortWithTLS             bool             `json:"-" toml:"port_use_tls"`
-	TLScertFile             string           `json:"-" toml:"port_tls_certfile"`
-	TLSkeyFile              string           `json:"-" toml:"port_tls_keyfile"`
-	DroveNamespaces         []DroveNamespace `json:"-" toml:"namespaces"`
-	EventRefreshIntervalSec int              `json:"-"  toml:"event_refresh_interval_sec"`
-	Nginxplusapiaddr        string           `json:"-"`
-	NginxReloadDisabled     bool             `json:"-" toml:"nginx_reload_disabled"`
-	NginxConfig             string           `json:"-" toml:"nginx_config"`
-	NginxTemplate           string           `json:"-" toml:"nginx_template"`
-	NginxCmd                string           `json:"-" toml:"nginx_cmd"`
-	NginxIgnoreCheck        bool             `json:"-" toml:"nginx_ignore_check"`
-	LeftDelimiter           string           `json:"-" toml:"left_delimiter"`
-	RightDelimiter          string           `json:"-" toml:"right_delimiter"`
-	MaxFailsUpstream        *int             `json:"max_fails,omitempty"`
-	FailTimeoutUpstream     string           `json:"fail_timeout,omitempty"`
-	SlowStartUpstream       string           `json:"slow_start,omitempty"`
-	LogLevel                string           `json:"-" toml:"loglevel"`
-	apiTimeout              int              `json:"-" toml:"api_timeout"`
-	DnsResolutionTimeoutSec int              `json:"-" toml:"dns_resolution_timeout_sec"`
-	Statsd                  StatsdConfig
-	LastUpdates             Updates
+	Xproxy                                string
+	Address                               string           `json:"-"`
+	Port                                  string           `json:"-"`
+	PortWithTLS                           bool             `json:"-" toml:"port_use_tls"`
+	TLScertFile                           string           `json:"-" toml:"port_tls_certfile"`
+	TLSkeyFile                            string           `json:"-" toml:"port_tls_keyfile"`
+	DroveNamespaces                       []DroveNamespace `json:"-" toml:"namespaces"`
+	EventRefreshIntervalSec               int              `json:"-"  toml:"event_refresh_interval_sec"`
+	Nginxplusapiaddr                      string           `json:"-"`
+	NginxReloadDisabled                   bool             `json:"-" toml:"nginx_reload_disabled"`
+	NginxConfig                           string           `json:"-" toml:"nginx_config"`
+	NginxTemplate                         string           `json:"-" toml:"nginx_template"`
+	NginxCmd                              string           `json:"-" toml:"nginx_cmd"`
+	NginxIgnoreCheck                      bool             `json:"-" toml:"nginx_ignore_check"`
+	LeftDelimiter                         string           `json:"-" toml:"left_delimiter"`
+	RightDelimiter                        string           `json:"-" toml:"right_delimiter"`
+	MaxFailsUpstream                      int              `json:"_" toml:"nginx_max_fails"`
+	FailTimeoutUpstream                   string           `json:"_" toml:"nginx_fail_timeout"`
+	SlowStartUpstream                     string           `json:"_" toml:"nginx_slow_start"`
+	NginxMaxFailsUpstreamCompatibility    *int             `json:"-" toml:"maxfailsupstream,omitempty"`
+	NginxFailTimeoutUpstreamCompatibility *string          `json:"-" toml:"failtimeoutupstream,omitempty"`
+	NginxSlowStartUpstreamCompatibility   *string          `json:"-" toml:"slowstartupstream,omitempty"`
+	LogLevel                              string           `json:"-" toml:"loglevel"`
+	apiTimeout                            int              `json:"-" toml:"api_timeout"`
+	DnsResolutionTimeoutSec               int              `json:"-" toml:"dns_resolution_timeout_sec"`
+	Statsd                                StatsdConfig
+	LastUpdates                           Updates
 }
 
 // Updates timings used for metrics
@@ -227,6 +231,30 @@ func setupDefaultConfig() {
 	if config.DnsResolutionTimeoutSec <= 0 {
 		config.DnsResolutionTimeoutSec = 2
 	}
+	//default NginxMaxFailsUpstream is 0 as omitempty is not present
+	//Older versions of nixy used different naming for these parameters, so we support both for backward compatibility
+	if config.NginxMaxFailsUpstreamCompatibility != nil {
+		config.MaxFailsUpstream = *config.NginxMaxFailsUpstreamCompatibility
+		logger.Warn("maxfailsupstream is deprecated, please use nginx_max_fails instead")
+	}
+	if config.NginxFailTimeoutUpstreamCompatibility != nil {
+		config.FailTimeoutUpstream = *config.NginxFailTimeoutUpstreamCompatibility
+		logger.Warn("failtimeoutupstream is deprecated, please use nginx_fail_timeout instead")
+	}
+	if config.NginxSlowStartUpstreamCompatibility != nil {
+		config.SlowStartUpstream = *config.NginxSlowStartUpstreamCompatibility
+		logger.Warn("slowstartupstream is deprecated, please use nginx_slow_start instead")
+	}
+	if config.FailTimeoutUpstream == "" || !regexp.MustCompile(`^\d+s$`).MatchString(config.FailTimeoutUpstream) {
+		logger.Error("Invalid input to failtimeoutupstream " + config.FailTimeoutUpstream)
+		config.FailTimeoutUpstream = "0s"
+		logger.Error("Invalid input to failtimeoutupstream, defaulting to " + config.FailTimeoutUpstream)
+	}
+	if config.SlowStartUpstream == "" || !regexp.MustCompile(`^\d+s$`).MatchString(config.SlowStartUpstream) {
+		config.SlowStartUpstream = "0s"
+		logger.Error("Invalid input to slowstartupstream, defaulting to " + config.SlowStartUpstream)
+	}
+	logger.WithFields(logrus.Fields{"max_fails": config.MaxFailsUpstream, "fail_timeout": config.FailTimeoutUpstream, "slow_start": config.SlowStartUpstream}).Debug("Nginx upstream healthcheck parameters set")
 }
 
 func validateConfig() error {
