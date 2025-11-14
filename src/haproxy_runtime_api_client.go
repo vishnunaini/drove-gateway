@@ -296,7 +296,7 @@ func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerM
 	var errs []string
 	for serverName, host := range desiredServerMap {
 		if _, exists := currentServerMap[serverName]; !exists {
-			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Debug("Adding new server")
+			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Info("Adding new server")
 			if err := manager.addNewServer(backend, serverName, host); err != nil {
 				errs = append(errs, fmt.Sprintf("add %s: %v", serverName, err))
 			}
