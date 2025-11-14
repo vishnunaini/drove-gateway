@@ -30,19 +30,10 @@ type NamespaceData struct {
 }
 
 type StaticConfig struct {
-	Xproxy                                string
-	ProxyPlatform                         string `json:"-" toml:"proxy_platform"`
-	LeftDelimiter                         string `json:"-" toml:"left_delimiter"`
-	RightDelimiter                        string `json:"-" toml:"right_delimiter"`
-	MaxFailsUpstream                      *int   `json:"max_fails,omitempty"`
-	FailTimeoutUpstream                   string `json:"fail_timeout,omitempty"`
-	SlowStartUpstream                     string `json:"slow_start,omitempty"`
-	HaproxyAddServerAttributesString      string `json:"-" toml:"haproxy_add_server_attributes_string"`
-	HaproxyAddServerSSLAttributesString   string `json:"-" toml:"haproxy_add_server_ssl_attributes_string"`
-	HaproxyServerNamePrefix               string `json:"-" toml:"haproxy_server_name_prefix"`
-	HaproxyServerNameHostPortSeparator    string `json:"-" toml:"haproxy_server_name_host_port_delimiter"`
-	HaproxyBackendNameSeparator           string `json:"-" toml:"haproxy_backend_name_separator"`
-	HaproxyBackendIncludeRoutingTagSuffix bool   `json:"-" toml:"haproxy_backend_include_routing_tag_suffix"`
+	Xproxy         string
+	ProxyPlatform  string `json:"-" toml:"proxy_platform"`
+	LeftDelimiter  string `json:"-" toml:"left_delimiter"`
+	RightDelimiter string `json:"-" toml:"right_delimiter"`
 }
 
 // DataManager manages namespaces and data for those namespaces
@@ -56,18 +47,12 @@ type DataManager struct {
 }
 
 // NewDataManager creates a new instance of DataManager
-func NewDataManager(inXproxy string, inProxyPlatform string, inLeftDelimiter string, inRightDelimiter string,
-	inMaxFailsUpstream int, inFailTimeoutUpstream string, inSlowStartUpstream string, inHaproxyAddServerAttributesString string, inHaproxyAddServerSSLAttributesString string,
-	inHaproxyServerNamePrefix string, inHaproxyServerNameHostPortSeparator string, inHaproxyBackendNameSeparator string, inHaproxyBackendIncludeRoutingTagSuffix bool) *DataManager {
+func NewDataManager(inXproxy string, inProxyPlatform string, inLeftDelimiter string, inRightDelimiter string) *DataManager {
 	emptyLastKnownVhosts := Vhosts{}
 	emptyLastKnownVhosts.Vhosts = make(map[string]bool)
 	return &DataManager{
-		namespaces: make(map[string]NamespaceData),
-		StaticData: StaticConfig{Xproxy: inXproxy, ProxyPlatform: inProxyPlatform, LeftDelimiter: inLeftDelimiter, RightDelimiter: inRightDelimiter,
-			MaxFailsUpstream: &inMaxFailsUpstream, FailTimeoutUpstream: inFailTimeoutUpstream, SlowStartUpstream: inSlowStartUpstream,
-			HaproxyAddServerAttributesString: inHaproxyAddServerAttributesString, HaproxyAddServerSSLAttributesString: inHaproxyAddServerSSLAttributesString,
-			HaproxyServerNamePrefix: inHaproxyServerNamePrefix, HaproxyServerNameHostPortSeparator: inHaproxyServerNameHostPortSeparator,
-			HaproxyBackendNameSeparator: inHaproxyBackendNameSeparator, HaproxyBackendIncludeRoutingTagSuffix: inHaproxyBackendIncludeRoutingTagSuffix},
+		namespaces:          make(map[string]NamespaceData),
+		StaticData:          StaticConfig{Xproxy: inXproxy, ProxyPlatform: inProxyPlatform, LeftDelimiter: inLeftDelimiter, RightDelimiter: inRightDelimiter},
 		LastKnownVhosts:     emptyLastKnownVhosts,
 		LastKnownBackends:   make(map[string]bool),
 		LastReloadTimestamp: time.Now(),

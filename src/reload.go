@@ -22,21 +22,13 @@ type NamespaceRenderingData struct {
 }
 
 type RenderingData struct {
-	Xproxy                                string
-	ProxyPlatform                         string                            `json:"-"`
-	LeftDelimiter                         string                            `json:"-" toml:"left_delimiter"`
-	RightDelimiter                        string                            `json:"-" toml:"right_delimiter"`
-	MaxFailsUpstream                      *int                              `json:"max_fails,omitempty"`
-	FailTimeoutUpstream                   string                            `json:"fail_timeout,omitempty"`
-	SlowStartUpstream                     string                            `json:"slow_start,omitempty"`
-	HaproxyAddServerAttributesString      string                            `json:"-" toml:"haproxy_add_server_attributes_string"`
-	HaproxyAddServerSSLAttributesString   string                            `json:"-" toml:"haproxy_add_server_ssl_attributes_string"`
-	HaproxyServerNamePrefix               string                            `json:"-" toml:"haproxy_server_name_prefix"`
-	HaproxyServerNameHostPortSeparator    string                            `json:"-" toml:"haproxy_server_name_host_port_delimiter"`
-	HaproxyBackendNameSeparator           string                            `json:"-" toml:"haproxy_backend_name_separator"`
-	HaproxyBackendIncludeRoutingTagSuffix bool                              `json:"-" toml:"haproxy_backend_include_routing_tag_suffix"`
-	Namespaces                            map[string]NamespaceRenderingData `json:"namespaces"`
-	Apps                                  map[string]App
+	Xproxy              string
+	ProxyPlatform       string                            `json:"-"`
+	LeftDelimiter       string                            `json:"-" toml:"left_delimiter"`
+	RightDelimiter      string                            `json:"-" toml:"right_delimiter"`
+	Namespaces          map[string]NamespaceRenderingData `json:"namespaces"`
+	Apps                map[string]App
+	currentBackendNames map[string]bool `json:"-"`
 }
 
 var tmplCache *template.Template
@@ -60,23 +52,11 @@ func reload() error {
 
 		// Any use of runtime API is disabled, so we must perform a full reload.
 		// We still need to calculate backend names to update the database.
-		currentBackendNames := make(map[string]bool)
-		for _, app := range data.Apps {
-			if app.Vhost != "" {
-				for groupName, groupData := range app.Groups {
-					logrus.Debug("Group: " + groupName + " Data: " + fmt.Sprintf("%+v", groupData))
-					backendName := GlobalProxyManager.GenerateStableBackendName(app, groupName)
-					if backendName != "" {
-						currentBackendNames[backendName] = true
-					}
-				}
-			}
-		}
-		err = updateAndReloadConfig(&data, false, currentBackendNames)
+		err = updateAndReloadConfig(&data, false)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
-			}).Error("unable to reload " + config.ProxyPlatform + " config")
+			}).Error("unable to reload " + data.ProxyPlatform + " config")
 			go Metrics.CountFailedReloads.Inc()
 			return err
 		}
@@ -86,24 +66,13 @@ func reload() error {
 		//For HAProxy, config is generated but not loaded even when reload is disabled as there is no other way to persist state across reloads
 		//For Nginx+, ngx http_api maintains it's own state files if referenced in the running nginx config. Hence no templating is done at all when reload is disabled
 		if ConfigReloadDisabled {
-			logger.Debug(config.ProxyPlatform + ": Template reload has been disabled")
+			logger.Debug(data.ProxyPlatform + ": Template reload has been disabled")
 		} else {
 			vhosts := db.ReadAllKnownVhosts()
 			lastKnownVhosts := db.ReadLastKnownVhosts()
 
 			// Generate a set of current backend names to detect changes.
-			currentBackendNames := make(map[string]bool)
-			for _, app := range data.Apps {
-				if app.Vhost != "" {
-					for groupName, groupData := range app.Groups {
-						logrus.Debug("Group: " + groupName + " Data: " + fmt.Sprintf("%+v", groupData))
-						backendName := GlobalProxyManager.GenerateStableBackendName(app, groupName)
-						if backendName != "" {
-							currentBackendNames[backendName] = true
-						}
-					}
-				}
-			}
+			currentBackendNames := data.currentBackendNames
 			lastKnownBackendNames := db.ReadLastKnownBackends()
 
 			// A reload is needed if vhosts have changed OR if the set of backend names has changed.
@@ -116,18 +85,18 @@ func reload() error {
 					logger.Info("Routing tag changes detected, resulting in new backend names. Need to reload config")
 				}
 
-				err = updateAndReloadConfig(&data, false, currentBackendNames)
+				err = updateAndReloadConfig(&data, false)
 				if err != nil {
 					logger.WithFields(logrus.Fields{
 						"error": err.Error(),
-					}).Error("unable to update and reload " + config.ProxyPlatform + " config. Runtime api calls to update upstreams will be skipped.")
+					}).Error("unable to update and reload " + data.ProxyPlatform + " config. Runtime api calls to update upstreams will be skipped.")
 					return err
 				}
 			} else {
 				logger.Debug("No changes detected in vhosts or backend names. No config update is necessary. Upstream updates will happen via " + config.ProxyPlatform + " apis")
 			}
 		}
-		logger.Debug("Updating upstreams via " + config.ProxyPlatform + " api")
+		logger.Debug("Updating upstreams via " + data.ProxyPlatform + " api")
 		if GlobalProxyManager != nil {
 			err = GlobalProxyManager.Reconcile(&data)
 			if err != nil {
@@ -137,7 +106,7 @@ func reload() error {
 				GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, err.Error())
 				logger.WithFields(logrus.Fields{
 					"error": err.Error(),
-				}).Error("unable to update upstreams via " + config.ProxyPlatform + " api")
+				}).Error("unable to update upstreams via " + data.ProxyPlatform + " api")
 				go Metrics.CountFailedReloads.Inc()
 			} else {
 				GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK")
@@ -147,7 +116,7 @@ func reload() error {
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
-		}).Error("unable to generate " + config.ProxyPlatform + " config")
+		}).Error("unable to generate " + data.ProxyPlatform + " config")
 		go Metrics.CountFailedReloads.Inc()
 		return err
 	}
@@ -160,13 +129,13 @@ func reload() error {
 }
 
 func updateProxyConfig(data *RenderingData) error {
-	logger.Debug("Updating " + config.ProxyPlatform + " config")
+	logger.Debug("Updating " + data.ProxyPlatform + " config")
 	config.LastUpdates.LastSync = time.Now()
 	err := writeConf(data)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
-		}).Error("unable to write " + config.ProxyPlatform + " config")
+		}).Error("unable to write " + data.ProxyPlatform + " config")
 		go Metrics.CountFailedReloads.Inc()
 		return err
 	}
@@ -174,7 +143,7 @@ func updateProxyConfig(data *RenderingData) error {
 	return nil
 }
 
-func updateAndReloadConfig(data *RenderingData, reloadDisabled bool, currentBackendNames map[string]bool) error {
+func updateAndReloadConfig(data *RenderingData, reloadDisabled bool) error {
 	logger.Debug("Updating config with reload")
 	start := time.Now()
 	vhosts := db.ReadAllKnownVhosts()
@@ -189,7 +158,7 @@ func updateAndReloadConfig(data *RenderingData, reloadDisabled bool, currentBack
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
-			}).Error("unable to reload " + config.ProxyPlatform)
+			}).Error("unable to reload " + data.ProxyPlatform)
 			go Metrics.CountFailedReloads.Inc()
 		} else {
 			elapsed := time.Since(start)
@@ -199,10 +168,10 @@ func updateAndReloadConfig(data *RenderingData, reloadDisabled bool, currentBack
 			}()
 			config.LastUpdates.LastProxyProgramReload = time.Now()
 			db.UpdateLastKnownVhosts(vhosts)
-			db.UpdateLastKnownBackends(currentBackendNames)
+			db.UpdateLastKnownBackends(data.currentBackendNames)
 		}
 	} else if reloadDisabled {
-		logger.Info("Config reload has been disabled. Not reloading " + config.ProxyPlatform + " even after vhost/backend changes")
+		logger.Info("Config reload has been disabled. Not reloading " + data.ProxyPlatform + " even after vhost/backend changes")
 	}
 	return nil
 }
@@ -215,16 +184,8 @@ func createRenderingData(data *RenderingData) {
 	data.ProxyPlatform = config.ProxyPlatform
 	data.LeftDelimiter = staticData.LeftDelimiter
 	data.RightDelimiter = staticData.RightDelimiter
-	data.FailTimeoutUpstream = staticData.FailTimeoutUpstream
-	data.MaxFailsUpstream = staticData.MaxFailsUpstream
-	data.SlowStartUpstream = staticData.SlowStartUpstream
-	data.HaproxyAddServerAttributesString = staticData.HaproxyAddServerAttributesString
-	data.HaproxyAddServerSSLAttributesString = staticData.HaproxyAddServerSSLAttributesString
-	data.HaproxyServerNamePrefix = staticData.HaproxyServerNamePrefix
-	data.HaproxyServerNameHostPortSeparator = staticData.HaproxyServerNameHostPortSeparator
-	data.HaproxyBackendNameSeparator = staticData.HaproxyBackendNameSeparator
-	data.HaproxyBackendIncludeRoutingTagSuffix = staticData.HaproxyBackendIncludeRoutingTagSuffix
 	data.Namespaces = make(map[string]NamespaceRenderingData)
+	data.currentBackendNames = make(map[string]bool)
 
 	allApps := make(map[string]App)
 
@@ -284,7 +245,21 @@ func createRenderingData(data *RenderingData) {
 			}
 		}
 	}
+
 	data.Apps = allApps
+
+	for _, app := range data.Apps {
+		if app.Vhost != "" {
+			for groupName, groupData := range app.Groups {
+				logrus.Debug("Group: " + groupName + " Data: " + fmt.Sprintf("%+v", groupData))
+				backendName := GlobalProxyManager.GenerateStableBackendName(app, groupName)
+				if backendName != "" {
+					data.currentBackendNames[backendName] = true
+				}
+			}
+		}
+	}
+
 	logger.WithFields(logrus.Fields{
 		"data": data,
 	}).Trace("Rendering data generated")
@@ -313,7 +288,7 @@ func writeConf(data *RenderingData) error {
 	}
 
 	parent := filepath.Dir(ConfigPath)
-	tmpFile, err := os.CreateTemp(parent, "."+config.ProxyPlatform+".conf.tmp-")
+	tmpFile, err := os.CreateTemp(parent, "."+data.ProxyPlatform+".conf.tmp-")
 	if err != nil {
 		return err
 	}
