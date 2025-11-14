@@ -47,7 +47,7 @@ func NewHaproxyManager(ctx context.Context, haproxySocketAddr string, disableLar
 	return &HaproxyManager{client: runtimeClient}, nil
 }
 
-func (m *HaproxyManager) ReconcileAllBackends(data *RenderingData, disableLargeBackendCountOptimisation bool) error {
+func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disableLargeBackendCountOptimisation bool) error {
 	start := time.Now()
 	var resultLabel string
 	defer func() {
@@ -109,7 +109,7 @@ func (m *HaproxyManager) ReconcileAllBackends(data *RenderingData, disableLargeB
 	err := error(nil)
 	if !config.HaproxyDisableLargeBackendCountOptimisation {
 		logger.Debug("HAProxy large backend count optimisation is enabled. Using aggregated call to get all backends and servers state")
-		allServersState, err = m.getServersStateWithBackend()
+		allServersState, err = manager.getServersStateWithBackend()
 		if err != nil {
 			resultLabel = "error"
 			updateHealthForUpstreamUpdateAPI(false, err.Error())
@@ -135,7 +135,7 @@ func (m *HaproxyManager) ReconcileAllBackends(data *RenderingData, disableLargeB
 				logger.Warn("Consider disabling large backend count optimisation with haproxy_disable_large_backend_count_optimisation set to true")
 			}
 			logger.WithField("backend", backend).Debug("No existing servers found for backend in aggregated state. Trying to get state for the backend directly")
-			currentServersForBackend, err = m.client.GetServersState(backend)
+			currentServersForBackend, err = manager.client.GetServersState(backend)
 		}
 
 		if err != nil {
@@ -152,7 +152,7 @@ func (m *HaproxyManager) ReconcileAllBackends(data *RenderingData, disableLargeB
 			Metrics.HaproxyAPICallsSuccessful.WithLabelValues("get_servers_state").Inc()
 		}
 
-		if err := m.reconcileBackend(backend, hosts, currentServersForBackend); err != nil {
+		if err := manager.reconcileBackend(backend, hosts, currentServersForBackend); err != nil {
 			reconciliationFailedBackends[backend] = true
 			logger.WithFields(logrus.Fields{
 				"backend": backend,
@@ -182,23 +182,23 @@ func (m *HaproxyManager) ReconcileAllBackends(data *RenderingData, disableLargeB
 	return nil
 }
 
-func (m *HaproxyManager) reconcileBackend(backend string, desiredHosts []Host, currentServers []*runtime_models.RuntimeServer) error {
+func (manager *HaproxyManager) reconcileBackend(backend string, desiredHosts []Host, currentServers []*runtime_models.RuntimeServer) error {
 	var errs []string
 	logger.WithField("backend", backend).Debug("Reconciling HAProxy backend")
 
-	desiredServerMap := m.buildDesiredServerMap(desiredHosts)
-	currentServerMap := m.buildCurrentServerMap(currentServers)
+	desiredServerMap := manager.buildDesiredServerMap(desiredHosts)
+	currentServerMap := manager.buildCurrentServerMap(currentServers)
 
-	if m.areServerMapsIdentical(desiredServerMap, currentServerMap) {
+	if manager.areServerMapsIdentical(desiredServerMap, currentServerMap) {
 		logger.WithField("backend", backend).Debug("HAProxy backend is already in the desired state. No changes needed.")
 		return nil
 	}
 
-	if err := m.addOrUpdateServers(backend, desiredServerMap, currentServerMap); err != nil {
+	if err := manager.addOrUpdateServers(backend, desiredServerMap, currentServerMap); err != nil {
 		errs = append(errs, fmt.Sprintf("add/update servers: %v", err))
 	}
 	//add or update servers first to avoid downtime in case of complete replacement of servers
-	if err := m.removeStaleServers(backend, currentServers, desiredServerMap); err != nil {
+	if err := manager.removeStaleServers(backend, currentServers, desiredServerMap); err != nil {
 		errs = append(errs, fmt.Sprintf("remove stale servers: %v", err))
 	}
 
@@ -210,7 +210,7 @@ func (m *HaproxyManager) reconcileBackend(backend string, desiredHosts []Host, c
 	return nil
 }
 
-func (m *HaproxyManager) areServerMapsIdentical(desiredMap map[string]Host, currentMap map[string]runtime_models.RuntimeServer) bool {
+func (manager *HaproxyManager) areServerMapsIdentical(desiredMap map[string]Host, currentMap map[string]runtime_models.RuntimeServer) bool {
 	if len(desiredMap) != len(currentMap) {
 		return false
 	}
@@ -219,7 +219,7 @@ func (m *HaproxyManager) areServerMapsIdentical(desiredMap map[string]Host, curr
 		if !exists {
 			return false
 		}
-		match, _, _ := m.compareServerConfigs(desiredHost, currentServer)
+		match, _, _ := manager.compareServerConfigs(desiredHost, currentServer)
 		if !match {
 			return false
 		}
@@ -227,7 +227,7 @@ func (m *HaproxyManager) areServerMapsIdentical(desiredMap map[string]Host, curr
 	return true
 }
 
-func (m *HaproxyManager) compareServerConfigs(desiredHost Host, current runtime_models.RuntimeServer) (bool, string, string) {
+func (manager *HaproxyManager) compareServerConfigs(desiredHost Host, current runtime_models.RuntimeServer) (bool, string, string) {
 	// Resolve desired hostname to IP for a reliable comparison with HAProxy's runtime state.
 	desiredIP, err := resolveWithIPFallback(desiredHost.Host)
 	if err != nil {
@@ -248,7 +248,7 @@ func (m *HaproxyManager) compareServerConfigs(desiredHost Host, current runtime_
 	return serverConfigsMatch, desiredIP, current.Address
 }
 
-func (m *HaproxyManager) buildDesiredServerMap(desiredHosts []Host) map[string]Host {
+func (manager *HaproxyManager) buildDesiredServerMap(desiredHosts []Host) map[string]Host {
 	serverMap := make(map[string]Host)
 	for _, host := range desiredHosts {
 		serverName := generateStableHaproxyServerName(host)
@@ -257,7 +257,7 @@ func (m *HaproxyManager) buildDesiredServerMap(desiredHosts []Host) map[string]H
 	return serverMap
 }
 
-func (m *HaproxyManager) buildCurrentServerMap(currentServers []*runtime_models.RuntimeServer) map[string]runtime_models.RuntimeServer {
+func (manager *HaproxyManager) buildCurrentServerMap(currentServers []*runtime_models.RuntimeServer) map[string]runtime_models.RuntimeServer {
 	serverMap := make(map[string]runtime_models.RuntimeServer)
 	for _, srv := range currentServers {
 		serverMap[srv.Name] = *srv
@@ -265,19 +265,19 @@ func (m *HaproxyManager) buildCurrentServerMap(currentServers []*runtime_models.
 	return serverMap
 }
 
-func (m *HaproxyManager) removeStaleServers(backend string, currentServers []*runtime_models.RuntimeServer, desiredServerMap map[string]Host) error {
+func (manager *HaproxyManager) removeStaleServers(backend string, currentServers []*runtime_models.RuntimeServer, desiredServerMap map[string]Host) error {
 	var errs []string
 	for _, srv := range currentServers {
 		if _, exists := desiredServerMap[srv.Name]; !exists {
 			logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name}).Info("Disabling and deleting stale server")
-			if err := m.client.SetServerState(backend, srv.Name, "maint"); err != nil {
+			if err := manager.client.SetServerState(backend, srv.Name, "maint"); err != nil {
 				Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_state_maint").Inc()
 				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to disable server")
 				errs = append(errs, fmt.Sprintf("disable %s: %v", srv.Name, err))
 			} else {
 				Metrics.HaproxyAPICallsSuccessful.WithLabelValues("set_server_state_maint").Inc()
 			}
-			if err := m.client.DeleteServer(backend, srv.Name); err != nil {
+			if err := manager.client.DeleteServer(backend, srv.Name); err != nil {
 				Metrics.HaproxyAPICallsFailed.WithLabelValues("delete_server").Inc()
 				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to delete server")
 				errs = append(errs, fmt.Sprintf("delete %s: %v", srv.Name, err))
@@ -292,17 +292,17 @@ func (m *HaproxyManager) removeStaleServers(backend string, currentServers []*ru
 	return nil
 }
 
-func (m *HaproxyManager) addOrUpdateServers(backend string, desiredServerMap map[string]Host, currentServerMap map[string]runtime_models.RuntimeServer) error {
+func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerMap map[string]Host, currentServerMap map[string]runtime_models.RuntimeServer) error {
 	var errs []string
 	for serverName, host := range desiredServerMap {
 		if _, exists := currentServerMap[serverName]; !exists {
 			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Debug("Adding new server")
-			if err := m.addNewServer(backend, serverName, host); err != nil {
+			if err := manager.addNewServer(backend, serverName, host); err != nil {
 				errs = append(errs, fmt.Sprintf("add %s: %v", serverName, err))
 			}
 		} else {
 			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Warn("Updating existing server due to diff in configuration")
-			if err := m.updateExistingServer(backend, serverName, host, currentServerMap[serverName]); err != nil {
+			if err := manager.updateExistingServer(backend, serverName, host, currentServerMap[serverName]); err != nil {
 				errs = append(errs, fmt.Sprintf("update %s: %v", serverName, err))
 			}
 		}
@@ -316,7 +316,7 @@ func (m *HaproxyManager) addOrUpdateServers(backend string, desiredServerMap map
 // settings from default-server statement in config are not applied when adding server via runtime api
 // all default-server params should be added explictly here
 // only use IP while adding server, not fqdn. HAProxy resolves the hostname only at startup/reload and dynamic servers don't support fqdn resolution
-func (m *HaproxyManager) addNewServer(backend, serverName string, host Host) error {
+func (manager *HaproxyManager) addNewServer(backend, serverName string, host Host) error {
 	logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Info("Adding new server")
 	desiredIP, err := resolveWithIPFallback(host.Host)
 	if err != nil {
@@ -339,14 +339,14 @@ func (m *HaproxyManager) addNewServer(backend, serverName string, host Host) err
 
 	}
 
-	if err := m.client.AddServer(backend, serverName, fmt.Sprintf("%s:%d %s", desiredIP, host.Port, attributes_string)); err != nil {
+	if err := manager.client.AddServer(backend, serverName, fmt.Sprintf("%s:%d %s", desiredIP, host.Port, attributes_string)); err != nil {
 		Metrics.HaproxyAPICallsFailed.WithLabelValues("add_server").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")
 		return err
 	}
 	Metrics.HaproxyAPICallsSuccessful.WithLabelValues("add_server").Inc()
 
-	if err := m.client.SetServerState(backend, serverName, "ready"); err != nil {
+	if err := manager.client.SetServerState(backend, serverName, "ready"); err != nil {
 		Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set new server state to ready")
 		return err
@@ -355,8 +355,8 @@ func (m *HaproxyManager) addNewServer(backend, serverName string, host Host) err
 	return nil
 }
 
-func (m *HaproxyManager) updateExistingServer(backend, serverName string, host Host, currentServer runtime_models.RuntimeServer) error {
-	match, desiredIP, _ := m.compareServerConfigs(host, currentServer)
+func (manager *HaproxyManager) updateExistingServer(backend, serverName string, host Host, currentServer runtime_models.RuntimeServer) error {
+	match, desiredIP, _ := manager.compareServerConfigs(host, currentServer)
 	if match {
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Trace("Server is up-to-date, no update needed")
 		return nil
@@ -374,7 +374,7 @@ func (m *HaproxyManager) updateExistingServer(backend, serverName string, host H
 
 	var errs []string
 
-	if err := m.client.SetServerAddr(backend, serverName, desiredIP, int(host.Port)); err != nil {
+	if err := manager.client.SetServerAddr(backend, serverName, desiredIP, int(host.Port)); err != nil {
 		Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_addr").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server address")
 		errs = append(errs, fmt.Sprintf("set address: %v", err))
@@ -382,7 +382,7 @@ func (m *HaproxyManager) updateExistingServer(backend, serverName string, host H
 		Metrics.HaproxyAPICallsSuccessful.WithLabelValues("set_server_addr").Inc()
 	}
 
-	if err := m.client.SetServerHealth(backend, serverName, "up"); err != nil {
+	if err := manager.client.SetServerHealth(backend, serverName, "up"); err != nil {
 		Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_health_up").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server health to up")
 		errs = append(errs, fmt.Sprintf("set health: %v", err))
@@ -390,7 +390,7 @@ func (m *HaproxyManager) updateExistingServer(backend, serverName string, host H
 		Metrics.HaproxyAPICallsSuccessful.WithLabelValues("set_server_health_up").Inc()
 	}
 
-	if err := m.client.SetServerState(backend, serverName, "ready"); err != nil {
+	if err := manager.client.SetServerState(backend, serverName, "ready"); err != nil {
 		Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_state_ready").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to set server state to ready")
 		errs = append(errs, fmt.Sprintf("set state: %v", err))
@@ -407,17 +407,17 @@ func (m *HaproxyManager) updateExistingServer(backend, serverName string, host H
 // Start of custom functions not available in HAProxy runtime client library
 // getServersStateWithBackend calls "show servers state" command and parses the output to get servers grouped by backend name
 
-func (m *HaproxyManager) getServersStateWithBackend() (map[string]runtime_models.RuntimeServers, error) {
+func (manager *HaproxyManager) getServersStateWithBackend() (map[string]runtime_models.RuntimeServers, error) {
 	cmd := "show servers state"
-	result, err := m.executeWithResponse(cmd)
+	result, err := manager.executeWithResponse(cmd)
 	if err != nil {
 		return nil, err
 	}
-	return m.parseRuntimeServersWithBackend(result)
+	return manager.parseRuntimeServersWithBackend(result)
 }
 
-func (m *HaproxyManager) executeWithResponse(command string) (string, error) {
-	rawdata, err := m.client.ExecuteRaw(command)
+func (manager *HaproxyManager) executeWithResponse(command string) (string, error) {
+	rawdata, err := manager.client.ExecuteRaw(command)
 	if err != nil {
 		return "", fmt.Errorf("%w [%s]", err, command)
 	}
@@ -431,7 +431,7 @@ func (m *HaproxyManager) executeWithResponse(command string) (string, error) {
 	return output, nil
 }
 
-func (m *HaproxyManager) parseRuntimeServersWithBackend(output string) (map[string]runtime_models.RuntimeServers, error) {
+func (manager *HaproxyManager) parseRuntimeServersWithBackend(output string) (map[string]runtime_models.RuntimeServers, error) {
 	lines := strings.Split(output, "\n")
 	result := make(map[string]runtime_models.RuntimeServers)
 
@@ -442,7 +442,7 @@ func (m *HaproxyManager) parseRuntimeServersWithBackend(output string) (map[stri
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") || strings.TrimSpace(line) == "1" {
 			continue
 		}
-		backend, server := m.parseRuntimeServerWithBackend(line)
+		backend, server := manager.parseRuntimeServerWithBackend(line)
 		if server != nil && backend != "" {
 			if _, ok := result[backend]; !ok {
 				result[backend] = []*runtime_models.RuntimeServer{}
@@ -458,7 +458,7 @@ func (m *HaproxyManager) parseRuntimeServersWithBackend(output string) (map[stri
 //5 app-client.drove.svc.cluster.local_app-client.drove.svc.cluster.local 1 server_prod-clusterdroveexecutor048.cluster.local_29291 10.57.50.208 2 0 1 1 31 1 0 2 0 0 0 0 prod-clusterdroveexecutor048.cluster.local 29291 - 0 0 - - 0
 //6 app-control-panel.drove.svc.cluster.local_app-control-panel.drove.svc.cluster.local 1 server_prod-clusterdroveexecutor015.cluster.local_26757 10.57.49.166 2 0 1 1 31 1 0 2 0 0 0 0 prod-clusterdroveexecutor015.cluster.local 26757 - 0 0 - - 0
 
-func (m *HaproxyManager) parseRuntimeServerWithBackend(line string) (backend string, server *runtime_models.RuntimeServer) {
+func (manager *HaproxyManager) parseRuntimeServerWithBackend(line string) (backend string, server *runtime_models.RuntimeServer) {
 	fields := strings.Split(line, " ")
 
 	if len(fields) < 19 {

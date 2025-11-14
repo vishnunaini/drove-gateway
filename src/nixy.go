@@ -438,13 +438,13 @@ func nixyVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 // Implement ProxyManager interface for NginxAPIManager
-func (m *NginxAPIManager) Reconcile(data *RenderingData) error {
-	return m.ReconcileAllVhosts(data)
+func (manager *NginxAPIManager) Reconcile(data *RenderingData) error {
+	return manager.ReconcileAllVhosts(data)
 }
 
 // Implement ProxyManager interface for HaproxyManager
-func (m *HaproxyManager) Reconcile(data *RenderingData) error {
-	return m.ReconcileAllBackends(data, config.HaproxyDisableLargeBackendCountOptimisation)
+func (manager *HaproxyManager) Reconcile(data *RenderingData) error {
+	return manager.ReconcileAllBackends(data, config.HaproxyDisableLargeBackendCountOptimisation)
 }
 
 func main() {
