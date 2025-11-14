@@ -424,7 +424,7 @@ func (dm *DataManager) UpdateLastKnownBackends(inLastKnownBackends map[string]bo
 	logger.WithFields(logrus.Fields{
 		"operation":         operation,
 		"LastKnownBackends": dm.LastKnownBackends,
-	}).Debug("UpdateLastKnownBackends finished successfully")
+	}).Trace("UpdateLastKnownBackends finished successfully")
 	return nil
 }
 

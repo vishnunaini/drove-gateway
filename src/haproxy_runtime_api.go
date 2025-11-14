@@ -296,10 +296,12 @@ func (m *HaproxyManager) addOrUpdateServers(backend string, desiredServerMap map
 	var errs []string
 	for serverName, host := range desiredServerMap {
 		if _, exists := currentServerMap[serverName]; !exists {
+			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Debug("Adding new server")
 			if err := m.addNewServer(backend, serverName, host); err != nil {
 				errs = append(errs, fmt.Sprintf("add %s: %v", serverName, err))
 			}
 		} else {
+			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Warn("Updating existing server due to diff in configuration")
 			if err := m.updateExistingServer(backend, serverName, host, currentServerMap[serverName]); err != nil {
 				errs = append(errs, fmt.Sprintf("update %s: %v", serverName, err))
 			}
@@ -450,6 +452,11 @@ func (m *HaproxyManager) parseRuntimeServersWithBackend(output string) (map[stri
 	}
 	return result, nil
 }
+
+// Example input string to parseRuntimeServerWithBackend:
+//# be_id be_name srv_id srv_name srv_addr srv_op_state srv_admin_state srv_uweight srv_iweight srv_time_since_last_change srv_check_status srv_check_result srv_check_health srv_check_state srv_agent_state bk_f_forced_id srv_f_forced_id srv_fqdn srv_port srvrecord srv_use_ssl srv_check_port srv_check_addr srv_agent_addr srv_agent_port
+//5 app-client.drove.svc.cluster.local_app-client.drove.svc.cluster.local 1 server_prod-clusterdroveexecutor048.cluster.local_29291 10.57.50.208 2 0 1 1 31 1 0 2 0 0 0 0 prod-clusterdroveexecutor048.cluster.local 29291 - 0 0 - - 0
+//6 app-control-panel.drove.svc.cluster.local_app-control-panel.drove.svc.cluster.local 1 server_prod-clusterdroveexecutor015.cluster.local_26757 10.57.49.166 2 0 1 1 31 1 0 2 0 0 0 0 prod-clusterdroveexecutor015.cluster.local 26757 - 0 0 - - 0
 
 func (m *HaproxyManager) parseRuntimeServerWithBackend(line string) (backend string, server *runtime_models.RuntimeServer) {
 	fields := strings.Split(line, " ")

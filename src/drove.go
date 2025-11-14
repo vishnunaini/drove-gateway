@@ -464,7 +464,6 @@ func matchingVhost(vHost string, realms []string) bool {
 	return false
 }
 
-
 // vhosts should be case insensitive as per standards. altough nginx is case insensitive, some other proxies like haproxy are not as they expect upstreams to handle it.
 // Also ensure routing tag values are grouped case insensitively.
 func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vhosts) bool {
@@ -553,7 +552,6 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 		// Update Prometheus gauges for routing tags
 		Metrics.GaugeAppsWithRoutingTag.WithLabelValues(droveConfig.Name).Set(float64(len(appsWithRoutingTag)))
 		Metrics.GaugeAppsWithoutRoutingTag.WithLabelValues(droveConfig.Name).Set(float64(len(appsWithoutRoutingTag)))
-		// Update StatsD gauges for routing tags
 	}
 
 	// Log the cumulative results for realm mismatches
