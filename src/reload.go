@@ -133,6 +133,8 @@ func reload() error {
 	logger.WithFields(logrus.Fields{
 		"took": elapsed,
 	}).Debug("reload worker completed")
+
+	_ = db.UpdateReloadTimestamps(start, elapsed)
 	return nil
 
 }

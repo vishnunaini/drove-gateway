@@ -47,12 +47,13 @@ type StaticConfig struct {
 
 // DataManager manages namespaces and data for those namespaces
 type DataManager struct {
-	mu                  sync.RWMutex             // Mutex for concurrency control
-	namespaces          map[string]NamespaceData // Map of namespaces to NamespaceData
-	LastKnownVhosts     Vhosts
-	LastKnownBackends   map[string]bool
-	LastReloadTimestamp time.Time // Timestamp of creation or modification
-	StaticData          StaticConfig
+	mu                        sync.RWMutex             // Mutex for concurrency control
+	namespaces                map[string]NamespaceData // Map of namespaces to NamespaceData
+	LastKnownVhosts           Vhosts
+	LastKnownBackends         map[string]bool
+	LastReloadTimestamp       time.Time // Timestamp of creation or modification
+	LastReloadElapsedDuration time.Duration
+	StaticData                StaticConfig
 }
 
 // NewDataManager creates a new instance of DataManager
@@ -68,9 +69,10 @@ func NewDataManager(inXproxy string, inProxyPlatform string, inLeftDelimiter str
 			HaproxyAddServerAttributesString: inHaproxyAddServerAttributesString, HaproxyAddServerSSLAttributesString: inHaproxyAddServerSSLAttributesString,
 			HaproxyServerNamePrefix: inHaproxyServerNamePrefix, HaproxyServerNameHostPortSeparator: inHaproxyServerNameHostPortSeparator,
 			HaproxyBackendNameSeparator: inHaproxyBackendNameSeparator, HaproxyBackendIncludeRoutingTagSuffix: inHaproxyBackendIncludeRoutingTagSuffix},
-		LastKnownVhosts:     emptyLastKnownVhosts,
-		LastKnownBackends:   make(map[string]bool),
-		LastReloadTimestamp: time.Now(),
+		LastKnownVhosts:           emptyLastKnownVhosts,
+		LastKnownBackends:         make(map[string]bool),
+		LastReloadTimestamp:       time.Now(),
+		LastReloadElapsedDuration: time.Duration(0),
 	}
 }
 
@@ -356,18 +358,34 @@ func (dm *DataManager) UpdateKnownVhosts(namespace string, KnownVHosts Vhosts) e
 	return nil
 }
 
-func (dm *DataManager) ReadLastReloadTimestamp() time.Time {
+func (dm *DataManager) ReadLastReloadTimestamps() (time.Time, time.Duration) {
 	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.RUnlock() // Ensure the lock is always released
 	operation := "LastReloadTimestamp"
 
 	// Log success
 	logger.WithFields(logrus.Fields{
-		"operation":           operation,
-		"LastReloadTimestamp": dm.LastReloadTimestamp,
-	}).Trace("ReadLoadedTime successfully")
+		"operation":                 operation,
+		"LastReloadTimestamp":       dm.LastReloadTimestamp,
+		"LastReloadElapsedDuration": dm.LastReloadElapsedDuration,
+	}).Trace("ReadLastReloadTimestamps successfully")
 
-	return dm.LastReloadTimestamp //returning copy
+	return dm.LastReloadTimestamp, dm.LastReloadElapsedDuration //returning copy
+}
+func (dm *DataManager) UpdateReloadTimestamps(startTime time.Time, elapsedTime time.Duration) error {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	operation := "UpdateReloadTimestamp"
+
+	dm.LastReloadTimestamp = startTime
+	dm.LastReloadElapsedDuration = elapsedTime
+
+	logger.WithFields(logrus.Fields{
+		"operation":                 operation,
+		"LastReloadTimestamp":       dm.LastReloadTimestamp,
+		"LastReloadElapsedDuration": dm.LastReloadElapsedDuration,
+	}).Trace("UpdateLastReloadTimestamps finished successfully")
+	return nil
 }
 
 func (dm *DataManager) ReadLastKnownVhosts() Vhosts {
@@ -390,7 +408,6 @@ func (dm *DataManager) UpdateLastKnownVhosts(inLastKnownVhosts Vhosts) error {
 	operation := "UpdateLastKnownVhosts"
 
 	dm.LastKnownVhosts = inLastKnownVhosts
-	dm.LastReloadTimestamp = time.Now()
 
 	logger.WithFields(logrus.Fields{
 		"operation":       operation,
@@ -419,7 +436,6 @@ func (dm *DataManager) UpdateLastKnownBackends(inLastKnownBackends map[string]bo
 	operation := "UpdateLastKnownBackends"
 
 	dm.LastKnownBackends = inLastKnownBackends
-	dm.LastReloadTimestamp = time.Now()
 
 	logger.WithFields(logrus.Fields{
 		"operation":         operation,
