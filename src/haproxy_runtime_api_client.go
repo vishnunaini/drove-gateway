@@ -75,7 +75,7 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 				continue
 			}
 
-			backendName := generateStableHaproxyBackendName(app, groupName)
+			backendName := GlobalProxyManager.GenerateStableBackendName(app, groupName)
 			if backendName != "" {
 				backendsToReconcile[backendName] = append(backendsToReconcile[backendName], groupData.Hosts...)
 			}
@@ -112,7 +112,7 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 		allServersState, err = manager.getServersStateWithBackend()
 		if err != nil {
 			resultLabel = "error"
-			updateHealthForUpstreamUpdateAPI(false, err.Error())
+			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, err.Error())
 			logger.WithFields(logrus.Fields{
 				"error": err,
 			}).Error("Failed to get HAProxy servers state for all backends")
@@ -167,18 +167,18 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 		resultLabel = "error"
 		if len(reconciliationFailedBackends) > 0 {
 			logger.WithField("failed_backends", reconciliationFailedBackends).Error("Failed to reconcile some HAProxy backends")
-			updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile some HAProxy backends: "+fmt.Sprintf("%v", reconciliationFailedBackends)).Error())
+			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, errors.New("failed to reconcile some HAProxy backends: "+fmt.Sprintf("%v", reconciliationFailedBackends)).Error())
 		}
 		if len(reconciledBackends) == 0 {
 			logger.WithField("reconciled_backends", reconciledBackends).Error("Failed to reconcile any HAProxy backends")
-			updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile any HAProxy backends").Error())
+			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, errors.New("failed to reconcile any HAProxy backends").Error())
 		}
 		return errors.New("Reconciliation failed for some or all HAProxy backends")
 	}
 
 	resultLabel = "success"
 	logger.Info("Successfully reconciled all HAProxy backends")
-	updateHealthForUpstreamUpdateAPI(true, "OK")
+	GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK")
 	return nil
 }
 
@@ -251,7 +251,7 @@ func (manager *HaproxyManager) compareServerConfigs(desiredHost Host, current ru
 func (manager *HaproxyManager) buildDesiredServerMap(desiredHosts []Host) map[string]Host {
 	serverMap := make(map[string]Host)
 	for _, host := range desiredHosts {
-		serverName := generateStableHaproxyServerName(host)
+		serverName := GlobalProxyManager.GenerateStableServerName(host)
 		serverMap[serverName] = host
 	}
 	return serverMap

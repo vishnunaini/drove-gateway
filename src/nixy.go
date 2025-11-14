@@ -1,13 +1,11 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -99,9 +97,9 @@ type Config struct {
 	HaproxyAddServerSSLAttributesString         string           `json:"-" toml:"haproxy_add_server_ssl_attributes_string"`
 	LeftDelimiter                               string           `json:"-" toml:"left_delimiter"`
 	RightDelimiter                              string           `json:"-" toml:"right_delimiter"`
-	NginxMaxFailsUpstream                       int              `json:"_" toml:"nginx_max_fails"`
-	NginxFailTimeoutUpstream                    string           `json:"_" toml:"nginx_fail_timeout"`
-	NginxSlowStartUpstream                      string           `json:"_" toml:"nginx_slow_start"`
+	NginxMaxFailsUpstream                       int              `json:"-" toml:"nginx_max_fails"`
+	NginxFailTimeoutUpstream                    string           `json:"-" toml:"nginx_fail_timeout"`
+	NginxSlowStartUpstream                      string           `json:"-" toml:"nginx_slow_start"`
 	NginxMaxFailsUpstreamCompatibility          *int             `json:"-" toml:"maxfailsupstream,omitempty"`
 	NginxFailTimeoutUpstreamCompatibility       *string          `json:"-" toml:"failtimeoutupstream,omitempty"`
 	NginxSlowStartUpstreamCompatibility         *string          `json:"-" toml:"slowstartupstream,omitempty"`
@@ -172,13 +170,11 @@ var ProgramCmdConfTestArg string
 
 var Metrics DroveGatewayPrometheusMetrics
 
-// ProxyManager interface for runtime API managers
-type ProxyManager interface {
-	Reconcile(data *RenderingData) error
-}
-
 // Global proxy manager instance
 var GlobalProxyManager ProxyManager
+
+// Use of API based upstream updates
+var upstreamUpdateAPIEnabled bool
 
 // set log level
 func setloglevel() {
@@ -480,35 +476,8 @@ func main() {
 	setupDefaultConfig()
 	setupPrometheusMetrics()
 	setupDataManager()
+	upstreamUpdateAPIEnabled, GlobalProxyManager = setupGlobalProxyManager()
 
-	// Conditionally initialize runtime API manager at startup
-	if config.ProxyPlatform == "nginx" && len(config.Nginxplusapiaddr) > 0 {
-		mgr, err := NewNginxAPIManager(
-			config.Nginxplusapiaddr,
-			time.Duration(config.apiTimeout)*time.Second,
-			config.NginxMaxFailsUpstream,
-			config.NginxFailTimeoutUpstream,
-			config.NginxSlowStartUpstream,
-		)
-		if err != nil {
-			logger.WithFields(logrus.Fields{
-				"error": err.Error(),
-			}).Fatal("unable to create nginx api manager at startup; exiting nixy")
-		}
-		GlobalProxyManager = mgr
-		logger.Info("NginxAPIManager initialized at startup")
-	} else if config.ProxyPlatform == "haproxy" && len(config.HaproxySocketAddr) > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.apiTimeout)*time.Second)
-		defer cancel()
-		mgr, err := NewHaproxyManager(ctx, config.HaproxySocketAddr, config.HaproxyDisableLargeBackendCountOptimisation)
-		if err != nil {
-			logger.WithFields(logrus.Fields{
-				"error": err.Error(),
-			}).Fatal("unable to create haproxy manager at startup; exiting nixy")
-		}
-		GlobalProxyManager = mgr
-		logger.Info("HaproxyManager initialized at startup")
-	}
 	mux := mux.NewRouter()
 	mux.HandleFunc("/", nixyVersion)
 	mux.HandleFunc("/v1/reload", nixyReload)
@@ -552,6 +521,6 @@ func main() {
 		err = s.ListenAndServe()
 	}
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 }

@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -55,20 +52,6 @@ func reload() error {
 
 	var upstreamUpdateAPIEnabled bool
 
-	if (config.ProxyPlatform == "nginx") && (len(config.Nginxplusapiaddr) == 0 || config.Nginxplusapiaddr == "") {
-		logger.Debug("Platform: " + config.ProxyPlatform + " API addr: " + config.Nginxplusapiaddr)
-		//Nginx plus http_api is disabled
-		upstreamUpdateAPIEnabled = false
-	} else if (config.ProxyPlatform == "haproxy") && (len(config.HaproxySocketAddr) == 0 || config.HaproxySocketAddr == "") {
-		logger.Debug("Platform: " + config.ProxyPlatform + " Socket addr: " + config.HaproxySocketAddr)
-		logger.Debug("Runtime API add server default-server attributes:" + config.HaproxyAddServerAttributesString)
-		logger.Debug("Runtime API add server ssl attributes:" + config.HaproxyAddServerSSLAttributesString)
-		//HAProxy Runtime API is disabled
-		upstreamUpdateAPIEnabled = false
-	} else {
-		upstreamUpdateAPIEnabled = true
-	}
-
 	if !upstreamUpdateAPIEnabled {
 		logger.Debug("Runtime API calls to update upstreams are disabled")
 
@@ -82,10 +65,9 @@ func reload() error {
 		currentBackendNames := make(map[string]bool)
 		for _, app := range data.Apps {
 			if app.Vhost != "" {
-				var backendName string
 				for groupName, groupData := range app.Groups {
 					logrus.Debug("Group: " + groupName + " Data: " + fmt.Sprintf("%+v", groupData))
-					backendName = generateStableBackendName(app, config.ProxyPlatform, groupName)
+					backendName := GlobalProxyManager.GenerateStableBackendName(app, groupName)
 					if backendName != "" {
 						currentBackendNames[backendName] = true
 					}
@@ -106,7 +88,7 @@ func reload() error {
 		//For HAProxy, config is generated but not loaded even when reload is disabled as there is no other way to persist state across reloads
 		//For Nginx+, ngx http_api maintains it's own state files if referenced in the running nginx config. Hence no templating is done at all when reload is disabled
 		if ConfigReloadDisabled {
-			logger.Debug("Nginx: Template reload has been disabled")
+			logger.Debug(config.ProxyPlatform + ": Template reload has been disabled")
 		} else {
 			vhosts := db.ReadAllKnownVhosts()
 			lastKnownVhosts := db.ReadLastKnownVhosts()
@@ -115,10 +97,9 @@ func reload() error {
 			currentBackendNames := make(map[string]bool)
 			for _, app := range data.Apps {
 				if app.Vhost != "" {
-					var backendName string
 					for groupName, groupData := range app.Groups {
 						logrus.Debug("Group: " + groupName + " Data: " + fmt.Sprintf("%+v", groupData))
-						backendName = generateStableBackendName(app, config.ProxyPlatform, groupName)
+						backendName := GlobalProxyManager.GenerateStableBackendName(app, groupName)
 						if backendName != "" {
 							currentBackendNames[backendName] = true
 						}
@@ -155,20 +136,20 @@ func reload() error {
 				logger.WithFields(logrus.Fields{
 					"error": err.Error(),
 				}).Error("unable to update upstreams via proxy manager api")
-				updateHealthForUpstreamUpdateAPI(false, err.Error())
+				GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, err.Error())
 				logger.WithFields(logrus.Fields{
 					"error": err.Error(),
 				}).Error("unable to update upstreams via " + config.ProxyPlatform + " api")
 				go Metrics.CountFailedReloads.Inc()
 			} else {
-				updateHealthForUpstreamUpdateAPI(true, "OK")
+				GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK")
 			}
 		}
 	}
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
-		}).Error("unable to generate nginx config")
+		}).Error("unable to generate " + config.ProxyPlatform + " config")
 		go Metrics.CountFailedReloads.Inc()
 		return err
 	}
@@ -178,13 +159,6 @@ func reload() error {
 	}).Debug("reload worker completed")
 	return nil
 
-}
-
-func updateHealthForUpstreamUpdateAPI(status bool, message string) {
-	health.Lock()
-	health.UpstreamUpdatesViaAPI.Healthy = status
-	health.UpstreamUpdatesViaAPI.Message = message
-	health.Unlock()
 }
 
 func updateWithoutReloadConfig(data *RenderingData) error {
@@ -218,16 +192,12 @@ func updateAndReloadConfig(data *RenderingData, reloadDisabled bool, currentBack
 	config.LastUpdates.LastConfigValid = time.Now()
 
 	if !reloadDisabled {
-		if config.ProxyPlatform == "nginx" {
-			err = reloadNginx()
-		} else if config.ProxyPlatform == "haproxy" {
-			err = reloadHaproxy()
-		}
+		err = GlobalProxyManager.Reload()
 
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
-			}).Error("unable to reload nginx")
+			}).Error("unable to reload " + config.ProxyPlatform)
 			go Metrics.CountFailedReloads.Inc()
 		} else {
 			elapsed := time.Since(start)
@@ -447,43 +417,6 @@ func resolveHostnameToIP(ctx context.Context, hostname string) (string, error) {
 	return ips[0], nil
 }
 
-func generateStableBackendName(app App, proxyPlatform string, groupName string) string {
-	if proxyPlatform == "nginx" {
-		return generateStableNginxUpstreamName(app, groupName)
-	} else if proxyPlatform == "haproxy" {
-		return generateStableHaproxyBackendName(app, groupName)
-	}
-	return app.Vhost
-}
-
-// generateStableNginxUpstreamName creates a valid upstream name from a vhost for nginx. Routing Tag is not supported yet for nginx+.
-func generateStableNginxUpstreamName(app App, groupName string) string {
-	vhost := app.Vhost
-	return vhost
-}
-
-// generateStableHaproxyBackendName creates a valid and unique backend name from a vhost and optional routing tag.
-func generateStableHaproxyBackendName(app App, groupName string) string {
-	vhost := app.Vhost
-	routingTagKey := app.RoutingTagKey
-	routingTagValue := groupName
-
-	// Only add suffix if the feature is enabled and a routing tag key is configured.
-	if config.HaproxyBackendIncludeRoutingTagSuffix && routingTagKey != "" {
-		return fmt.Sprintf("%s%s%s", vhost, config.HaproxyBackendNameSeparator, routingTagValue)
-	}
-
-	// Fallback to just the vhost if no routing tag is found or configured.
-	return vhost
-}
-
-// generateStableHaproxyServerName creates a valid and unique server name from a host.
-func generateStableHaproxyServerName(host Host) string {
-	// Replace characters that are invalid in HAProxy server names.
-	sanitizer := strings.NewReplacer(":", config.HaproxyServerNameHostPortSeparator)
-	return fmt.Sprintf("%s%s%s%s%d", config.HaproxyServerNamePrefix, config.HaproxyServerNameHostPortSeparator, sanitizer.Replace(host.Host), config.HaproxyServerNameHostPortSeparator, host.Port)
-}
-
 func getTmpl(proxyTemplatePath string) (*template.Template, error) {
 	tmplCacheOnce.Do(func() {
 		logger.WithFields(logrus.Fields{
@@ -526,67 +459,11 @@ func getTmpl(proxyTemplatePath string) (*template.Template, error) {
 	return tmplCache, tmplCacheErr
 }
 
-func checkConf(path string) error {
-	// Always return OK if disabled in config.
+func checkConf(configPath string) error {
 	if IgnoreCheck {
 		return nil
 	}
-	// This is to allow arguments as well. Example "docker exec nginx..."
-	args := strings.Fields(ProgramCmd)
-	head := args[0]
-	args = args[1:]
-	args = append(args, ProgramCmdConfFileArg)
-	args = append(args, path)
-	args = append(args, ProgramCmdConfTestArg)
-	cmd := exec.Command(head, args...)
-	//e.g for nginx cmd := exec.Command(parts..., "-c", path, "-t")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run() // will wait for command to return
-	if err != nil {
-		msg := fmt.Sprint(err) + ": " + stderr.String()
-		errstd := errors.New(msg)
-		return errstd
-	}
-	return nil
-}
-
-func reloadNginx() error {
-	logger.Info("Reloading nginx with cmd: " + config.NginxCmd)
-	// This is to allow arguments as well. Example "docker exec nginx..."
-	args := strings.Fields(config.NginxCmd)
-	head := args[0]
-	args = args[1:]
-	args = append(args, "-s")
-	args = append(args, "reload")
-	cmd := exec.Command(head, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run() // will wait for command to return
-	if err != nil {
-		msg := fmt.Sprint(err) + ": " + stderr.String()
-		errstd := errors.New(msg)
-		return errstd
-	}
-	return nil
-}
-
-func reloadHaproxy() error {
-	logger.Info("Reloading haproxy with cmd: " + config.HaproxyReloadCmd)
-	// This is to allow other cmds as well. Example "docker exec haproxy..." or SIGUSR2 to master worker
-	args := strings.Fields(config.HaproxyReloadCmd)
-	head := args[0]
-	args = args[1:]
-	cmd := exec.Command(head, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run() // will wait for command to return
-	if err != nil {
-		msg := fmt.Sprint(err) + ": " + stderr.String()
-		errstd := errors.New(msg)
-		return errstd
-	}
-	return nil
+	return GlobalProxyManager.CheckConfig()
 }
 
 func reloadWorker() {
