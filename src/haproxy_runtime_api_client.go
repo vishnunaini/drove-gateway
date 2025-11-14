@@ -18,10 +18,12 @@ import (
 )
 
 type HaproxyManager struct {
-	client runtime_api.Runtime
+	client                           runtime_api.Runtime
+	add_server_attributes_string     string
+	add_server_ssl_attributes_string string
 }
 
-func NewHaproxyManager(ctx context.Context, haproxySocketAddr string, disableLargeBackendCountOptimisation bool) (*HaproxyManager, error) {
+func NewHaproxyManager(ctx context.Context, haproxySocketAddr string, disableLargeBackendCountOptimisation bool, addServerAttributesString string, addServerSSLAttributesString string) (*HaproxyManager, error) {
 	logger.WithField("haproxy_socket", haproxySocketAddr).Debug("Preparing to connect to HAProxy runtime API")
 
 	if haproxySocketAddr == "" {
@@ -44,7 +46,7 @@ func NewHaproxyManager(ctx context.Context, haproxySocketAddr string, disableLar
 	}
 
 	logger.Info("Successfully connected to HAProxy runtime API")
-	return &HaproxyManager{client: runtimeClient}, nil
+	return &HaproxyManager{client: runtimeClient, add_server_attributes_string: addServerAttributesString, add_server_ssl_attributes_string: addServerSSLAttributesString}, nil
 }
 
 func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disableLargeBackendCountOptimisation bool) error {
@@ -107,7 +109,7 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 	reconciliationFailedBackends := make(map[string]bool)
 	allServersState := make(map[string]runtime_models.RuntimeServers)
 	err := error(nil)
-	if !config.HaproxyDisableLargeBackendCountOptimisation {
+	if !disableLargeBackendCountOptimisation {
 		logger.Debug("HAProxy large backend count optimisation is enabled. Using aggregated call to get all backends and servers state")
 		allServersState, err = manager.getServersStateWithBackend()
 		if err != nil {
@@ -117,7 +119,9 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 				"error": err,
 			}).Error("Failed to get HAProxy servers state for all backends")
 			Metrics.HaproxyAPICallsFailed.WithLabelValues("get_servers_state_all_backends").Inc()
-			return fmt.Errorf("failed to get HAProxy servers state for all backends: %w", err)
+			err = fmt.Errorf("failed to get HAProxy servers state for all backends: %w", err)
+			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, err.Error())
+			return err
 		}
 		Metrics.HaproxyAPICallsSuccessful.WithLabelValues("get_servers_state_all_backends").Inc()
 	}
@@ -125,17 +129,17 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 	for backend, hosts := range backendsToReconcile {
 
 		currentServersForBackend := []*runtime_models.RuntimeServer{}
-		err := error(nil)
+		backendErr := error(nil)
 		// If we have state for this backend from the aggregated call, use it directly.
 		// This avoids making an additional API call per backend.
-		if !config.HaproxyDisableLargeBackendCountOptimisation || allServersState[backend] != nil {
+		if !disableLargeBackendCountOptimisation || allServersState[backend] != nil {
 			currentServersForBackend = allServersState[backend]
 		} else {
 			if allServersState[backend] != nil {
 				logger.Warn("Consider disabling large backend count optimisation with haproxy_disable_large_backend_count_optimisation set to true")
 			}
 			logger.WithField("backend", backend).Debug("No existing servers found for backend in aggregated state. Trying to get state for the backend directly")
-			currentServersForBackend, err = manager.client.GetServersState(backend)
+			currentServersForBackend, backendErr = manager.client.GetServersState(backend)
 		}
 
 		if err != nil {
@@ -143,7 +147,7 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 			// This error is often not fatal; it can mean the backend doesn't exist yet.
 			logger.WithFields(logrus.Fields{
 				"backend": backend,
-				"error":   err,
+				"error":   backendErr,
 			}).Warning("Could not get servers for backend, it may be new. Proceeding with reconciliation.")
 			Metrics.HaproxyAPICallsFailed.WithLabelValues("get_servers_state").Inc()
 			// Pass an empty slice so reconciliation can proceed to add servers.
@@ -152,11 +156,11 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 			Metrics.HaproxyAPICallsSuccessful.WithLabelValues("get_servers_state").Inc()
 		}
 
-		if err := manager.reconcileBackend(backend, hosts, currentServersForBackend); err != nil {
+		if backendErr = manager.reconcileBackend(backend, hosts, currentServersForBackend); err != nil {
 			reconciliationFailedBackends[backend] = true
 			logger.WithFields(logrus.Fields{
 				"backend": backend,
-				"error":   err,
+				"error":   backendErr,
 			}).Error("Failed to reconcile HAProxy backend")
 			// Continue with other backends instead of failing completely
 		} else {
@@ -167,18 +171,19 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 		resultLabel = "error"
 		if len(reconciliationFailedBackends) > 0 {
 			logger.WithField("failed_backends", reconciliationFailedBackends).Error("Failed to reconcile some HAProxy backends")
-			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, errors.New("failed to reconcile some HAProxy backends: "+fmt.Sprintf("%v", reconciliationFailedBackends)).Error())
+			err = errors.Join(err, errors.New("failed to reconcile some HAProxy backends: "+fmt.Sprintf("%v", reconciliationFailedBackends)))
+			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, err.Error())
 		}
 		if len(reconciledBackends) == 0 {
 			logger.WithField("reconciled_backends", reconciledBackends).Error("Failed to reconcile any HAProxy backends")
-			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, errors.New("failed to reconcile any HAProxy backends").Error())
+			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, errors.Join(errors.New("failed to reconcile any HAProxy backends"), err).Error())
 		}
-		return errors.New("Reconciliation failed for some or all HAProxy backends")
+		return errors.Join(errors.New("Reconciliation failed for some or all HAProxy backends"), err)
+	} else if len(reconciliationFailedBackends) == 0 {
+		resultLabel = "success"
+		logger.Info("Successfully reconciled all HAProxy backends")
+		GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK")
 	}
-
-	resultLabel = "success"
-	logger.Info("Successfully reconciled all HAProxy backends")
-	GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK")
 	return nil
 }
 
@@ -329,12 +334,12 @@ func (manager *HaproxyManager) addNewServer(backend, serverName string, host Hos
 		return nil
 	}
 
-	attributes_string := config.HaproxyAddServerAttributesString
+	attributes_string := manager.add_server_attributes_string
 	logger.WithFields(logrus.Fields{"attributes": attributes_string, "backend": backend, "server": serverName}).Debug("Adding attributes to server")
 
 	if host.PortType == "https" {
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Debug("HTTPS port type detected. HAProxy runtime API does not support adding SSL parameters via runtime. Ensure SSL settings like ciphers are configured in the static config.")
-		attributes_string = fmt.Sprintf("%s %s", attributes_string, config.HaproxyAddServerSSLAttributesString)
+		attributes_string = fmt.Sprintf("%s %s", attributes_string, manager.add_server_ssl_attributes_string)
 		logger.WithFields(logrus.Fields{"attributes": attributes_string, "backend": backend, "server": serverName}).Info("Adding SSL attributes to server")
 
 	}

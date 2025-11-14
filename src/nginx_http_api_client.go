@@ -85,6 +85,7 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 
 	reconciledApps := make(map[string]bool)
 	reconciliationFailedApps := make(map[string]bool)
+	err := error(nil)
 
 	for _, app := range data.Apps {
 		if !isHTTPHostGroup(app.Hosts) || app.Vhost == "" || len(app.Hosts) == 0 {
@@ -126,7 +127,7 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 		}
 
 		// If upstream has no servers, UpdateHTTPServers returns error as in-line GetHTTPServers returns error. server ID 0 needs to be explicitly initiated by a PATCH
-		err := manager.client.CheckIfUpstreamExists(upstreamtocheck)
+		err = manager.client.CheckIfUpstreamExists(upstreamtocheck)
 		if err != nil {
 			Metrics.NginxAPICallsFailed.WithLabelValues("check_if_upstream_exists").Inc()
 			// First add atleast one server to initialise upstream to support UpdateHTTPServers
@@ -212,7 +213,7 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 					"vhost": upstreamtocheck,
 					"error": updateErr,
 				}).Error("unable to update nginx upstreams")
-				return updateErr
+				err = errors.Join(err, updateErr)
 			}
 		} else {
 			reconciliationFailedApps[app.Vhost] = true
@@ -220,24 +221,24 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 				"vhost": app.Vhost,
 				"error": err,
 			}).Error("unable to check if upstream exists in nginx plus")
-			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, err.Error())
-			return err
 		}
 		reconciledApps[app.Vhost] = true
 	}
 
-	if len(reconciliationFailedApps) > 0 {
+	if len(reconciliationFailedApps) > 0 || len(reconciledApps) == 0 {
 		resultLabel = "error"
-		logger.WithField("failed_apps", reconciliationFailedApps).Error("Failed to reconcile some nginx plus vhosts")
-		GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, errors.New("failed to reconcile some nginx plus vhosts: "+fmt.Sprintf("%v", reconciliationFailedApps)).Error())
+		if len(reconciliationFailedApps) > 0 {
+			logger.WithField("failed_apps", reconciliationFailedApps).Error("Failed to reconcile some nginx plus vhosts")
+			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, errors.New("failed to reconcile some nginx plus vhosts: "+fmt.Sprintf("%v", reconciliationFailedApps)).Error())
+		} else if len(reconciledApps) == 0 {
+			resultLabel = "error"
+			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, errors.New("failed to reconcile any nginx plus vhosts").Error())
+		}
+		return errors.Join(errors.New("failed to reconcile any nginx plus vhosts"), err)
+	} else if len(reconciliationFailedApps) == 0 {
+		resultLabel = "success"
+		logger.Info("Successfully reconciled all nginx plus vhosts")
+		GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK")
 	}
-	if len(reconciledApps) == 0 {
-		resultLabel = "error"
-		GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, errors.New("failed to reconcile any nginx plus vhosts").Error())
-		return errors.New("failed to reconcile any nginx plus vhosts")
-	}
-	resultLabel = "success"
-	logger.Info("Successfully reconciled all nginx plus vhosts")
-	GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK")
 	return nil
 }

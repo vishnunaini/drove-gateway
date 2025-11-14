@@ -170,7 +170,7 @@ func setupGlobalProxyManager() (bool, ProxyManager) {
 		logger.Debug("Runtime API add server ssl attributes:" + config.HaproxyAddServerSSLAttributesString)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.apiTimeout)*time.Second)
 		defer cancel()
-		mgr, err := NewHaproxyManager(ctx, config.HaproxySocketAddr, config.HaproxyDisableLargeBackendCountOptimisation)
+		mgr, err := NewHaproxyManager(ctx, config.HaproxySocketAddr, config.HaproxyDisableLargeBackendCountOptimisation, config.HaproxyAddServerAttributesString, config.HaproxyAddServerSSLAttributesString)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
