@@ -22,13 +22,22 @@ type NamespaceRenderingData struct {
 }
 
 type RenderingData struct {
-	Xproxy              string
-	ProxyPlatform       string                            `json:"-"`
-	LeftDelimiter       string                            `json:"-" toml:"left_delimiter"`
-	RightDelimiter      string                            `json:"-" toml:"right_delimiter"`
-	Namespaces          map[string]NamespaceRenderingData `json:"namespaces"`
-	Apps                map[string]App
-	currentBackendNames map[string]bool `json:"-"`
+	Xproxy                                string
+	ProxyPlatform                         string                            `json:"-"`
+	LeftDelimiter                         string                            `json:"-" toml:"left_delimiter"`
+	RightDelimiter                        string                            `json:"-" toml:"right_delimiter"`
+	NginxMaxFailsUpstream                 int                               `json:"-" toml:"max_fails"`
+	NginxFailTimeoutUpstream              string                            `json:"-" toml:"nginx_fail_timeout"`
+	NginxSlowStartUpstream                string                            `json:"-" toml:"nginx_slow_start"`
+	HaproxyAddServerAttributesString      string                            `json:"-" toml:"haproxy_add_server_attributes_string"`
+	HaproxyAddServerSSLAttributesString   string                            `json:"-" toml:"haproxy_add_server_ssl_attributes_string"`
+	HaproxyServerNamePrefix               string                            `json:"-" toml:"haproxy_server_name_prefix"`
+	HaproxyServerNameHostPortSeparator    string                            `json:"-" toml:"haproxy_server_name_host_port_delimiter"`
+	HaproxyBackendNameSeparator           string                            `json:"-" toml:"haproxy_backend_name_separator"`
+	HaproxyBackendIncludeRoutingTagSuffix bool                              `json:"-" toml:"haproxy_backend_include_routing_tag_suffix"`
+	Namespaces                            map[string]NamespaceRenderingData `json:"namespaces"`
+	Apps                                  map[string]App
+	currentBackendNames                   map[string]bool `json:"-"`
 }
 
 var tmplCache *template.Template
