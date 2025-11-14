@@ -159,14 +159,14 @@ func reload() error {
 
 }
 
-func updateWithoutReloadConfig(data *RenderingData) error {
-	logger.Debug("Updating config without reload")
+func updateProxyConfig(data *RenderingData) error {
+	logger.Debug("Updating " + config.ProxyPlatform + " config")
 	config.LastUpdates.LastSync = time.Now()
 	err := writeConf(data)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
-		}).Error("unable to generate " + config.ProxyPlatform + " config")
+		}).Error("unable to write " + config.ProxyPlatform + " config")
 		go Metrics.CountFailedReloads.Inc()
 		return err
 	}
@@ -177,17 +177,11 @@ func updateWithoutReloadConfig(data *RenderingData) error {
 func updateAndReloadConfig(data *RenderingData, reloadDisabled bool, currentBackendNames map[string]bool) error {
 	logger.Debug("Updating config with reload")
 	start := time.Now()
-	config.LastUpdates.LastSync = time.Now()
 	vhosts := db.ReadAllKnownVhosts()
-	err := writeConf(data)
+	err := updateProxyConfig(data)
 	if err != nil {
-		go Metrics.CountFailedReloads.Inc()
-		logger.WithFields(logrus.Fields{
-			"error": err.Error(),
-		}).Error("unable to write " + config.ProxyPlatform + " config")
 		return err
 	}
-	config.LastUpdates.LastConfigValid = time.Now()
 
 	if !reloadDisabled {
 		err = GlobalProxyManager.Reload()

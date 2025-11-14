@@ -301,7 +301,7 @@ func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerM
 				errs = append(errs, fmt.Sprintf("add %s: %v", serverName, err))
 			}
 		} else {
-			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Warn("Updating existing server due to diff in configuration")
+			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host, "desired": desiredServerMap[serverName], "current": currentServerMap[serverName]}).Debug("Updating existing server")
 			if err := manager.updateExistingServer(backend, serverName, host, currentServerMap[serverName]); err != nil {
 				errs = append(errs, fmt.Sprintf("update %s: %v", serverName, err))
 			}
@@ -358,7 +358,7 @@ func (manager *HaproxyManager) addNewServer(backend, serverName string, host Hos
 func (manager *HaproxyManager) updateExistingServer(backend, serverName string, host Host, currentServer runtime_models.RuntimeServer) error {
 	match, desiredIP, _ := manager.compareServerConfigs(host, currentServer)
 	if match {
-		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Trace("Server is up-to-date, no update needed")
+		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Debug("Server is up-to-date, no update needed")
 		return nil
 	}
 	logger.WithFields(logrus.Fields{

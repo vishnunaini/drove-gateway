@@ -98,6 +98,9 @@ func (pmgr *HAProxyManager) GetTempFilePattern() string {
 }
 
 func (pmgr *HAProxyManager) Reconcile(data *RenderingData) error {
+	//For HAProxy, config is generated but not loaded even when reload is disabled as there is not other way to persist state across reloads
+	updateProxyConfig(data)
+
 	return pmgr.apiManager.ReconcileAllBackends(data, config.HaproxyDisableLargeBackendCountOptimisation)
 }
 
