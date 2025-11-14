@@ -193,6 +193,15 @@ func createRenderingData(data *RenderingData) {
 	data.ProxyPlatform = config.ProxyPlatform
 	data.LeftDelimiter = staticData.LeftDelimiter
 	data.RightDelimiter = staticData.RightDelimiter
+	data.NginxFailTimeoutUpstream = staticData.NginxFailTimeoutUpstream
+	data.NginxMaxFailsUpstream = staticData.NginxMaxFailsUpstream
+	data.NginxSlowStartUpstream = staticData.NginxSlowStartUpstream
+	data.HaproxyAddServerAttributesString = staticData.HaproxyAddServerAttributesString
+	data.HaproxyAddServerSSLAttributesString = staticData.HaproxyAddServerSSLAttributesString
+	data.HaproxyServerNamePrefix = staticData.HaproxyServerNamePrefix
+	data.HaproxyServerNameHostPortSeparator = staticData.HaproxyServerNameHostPortSeparator
+	data.HaproxyBackendNameSeparator = staticData.HaproxyBackendNameSeparator
+	data.HaproxyBackendIncludeRoutingTagSuffix = staticData.HaproxyBackendIncludeRoutingTagSuffix
 	data.Namespaces = make(map[string]NamespaceRenderingData)
 	data.currentBackendNames = make(map[string]bool)
 
