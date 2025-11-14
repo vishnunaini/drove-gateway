@@ -50,8 +50,6 @@ func reload() error {
 	createRenderingData(&data)
 	config.LastUpdates.LastSync = time.Now()
 
-	var upstreamUpdateAPIEnabled bool
-
 	if !upstreamUpdateAPIEnabled {
 		logger.Debug("Runtime API calls to update upstreams are disabled")
 
