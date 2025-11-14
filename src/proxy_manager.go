@@ -60,6 +60,7 @@ func (pmgr *NginxProxyManager) Reload() error {
 	head := args[0]
 	args = args[1:]
 	args = append(args, "-s", "reload")
+	logger.WithFields(logrus.Fields{"cmd": head, "args": args}).Info("Reloading nginx")
 	return runCommand(head, args...)
 }
 
@@ -111,11 +112,11 @@ func (pmgr *HAProxyManager) Reload() error {
 	if err := pmgr.CheckConfig(); err != nil {
 		return err
 	}
-	logger.Info("Reloading haproxy with cmd: " + pmgr.config.HaproxyReloadCmd)
 	// This is to allow arguments as well. Example "docker exec nginx..." or SIGUSR2 to master worker
 	args := strings.Fields(pmgr.config.HaproxyReloadCmd)
 	head := args[0]
 	args = args[1:]
+	logger.WithFields(logrus.Fields{"cmd": head, "args": args}).Info("Reloading haproxy")
 	return runCommand(head, args...)
 }
 
