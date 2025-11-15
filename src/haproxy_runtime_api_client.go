@@ -303,7 +303,7 @@ func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerM
 	var errs []string
 	for serverName, host := range desiredServerMap {
 		if _, exists := currentServerMap[serverName]; !exists {
-			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Info("Adding new server")
+			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Debug("Required server not found, adding new server")
 			if err := manager.addNewServer(backend, serverName, host); err != nil {
 				errs = append(errs, fmt.Sprintf("add %s: %v", serverName, err))
 			}
@@ -324,7 +324,7 @@ func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerM
 // all default-server params should be added explictly here
 // only use IP while adding server, not fqdn. HAProxy resolves the hostname only at startup/reload and dynamic servers don't support fqdn resolution
 func (manager *HaproxyManager) addNewServer(backend, serverName string, host Host) error {
-	logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Info("Adding new server")
+	logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Info("Adding fresh server")
 	// Ensure you resolve desired hostname to IP for HAProxy server addition. Done while building desiredServerMap
 	if host.PortType != "http" && host.PortType != "https" {
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Warning("Non-HTTP/HTTPS port type detected. Skipping addition of this server via HAProxy runtime API.")
