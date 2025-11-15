@@ -54,10 +54,7 @@ func reload() error {
 	if !upstreamUpdateAPIEnabled {
 		logger.Debug("Runtime API calls to update upstreams are disabled")
 
-		health.Lock()
-		health.UpstreamUpdatesViaAPI.Healthy = true
-		health.UpstreamUpdatesViaAPI.Message = "OK: Not in use, full reloads are enabled"
-		health.Unlock()
+		GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK: Not in use, full reloads are enabled")
 
 		// Any use of runtime API is disabled, so we must perform a full reload.
 		// We still need to calculate backend names to update the database.
