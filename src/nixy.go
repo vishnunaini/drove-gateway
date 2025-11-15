@@ -125,12 +125,19 @@ type EndpointStatus struct {
 	Message   string
 }
 
+type NamespaceStatus struct {
+	Namespace string
+	Healthy   bool
+	Message   string
+}
+
 // Health struct
 type Health struct {
 	sync.RWMutex
 	Config                Status
 	Template              Status
 	UpstreamUpdatesViaAPI Status
+	NamespaceHealth       map[string]NamespaceStatus
 	NamespaceEndpoints    map[string][]EndpointStatus
 }
 
@@ -186,17 +193,25 @@ var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{I
 
 func newHealth() {
 	health.NamespaceEndpoints = make(map[string][]EndpointStatus)
+	health.NamespaceHealth = make(map[string]NamespaceStatus)
 	health.UpstreamUpdatesViaAPI = Status{
 		Healthy: false,
 		Message: "pending first check",
 	}
-	health.Config = Status{
-		Healthy: false,
-		Message: "pending first check",
-	}
-	health.Template = Status{
-		Healthy: false,
-		Message: "pending first check",
+	if config.NginxReloadDisabled {
+		health.Config.Message = "Config Reload disabled"
+		health.Config.Healthy = true
+		health.Template.Message = "Templating disabled"
+		health.Template.Healthy = true
+	} else {
+		health.Config = Status{
+			Healthy: false,
+			Message: "pending first check",
+		}
+		health.Template = Status{
+			Healthy: false,
+			Message: "pending first check",
+		}
 	}
 	for _, nsConfig := range config.DroveNamespaces {
 		e := []EndpointStatus{}
@@ -209,6 +224,11 @@ func newHealth() {
 			e = append(e, s)
 		}
 		health.NamespaceEndpoints[nsConfig.Name] = e
+		health.NamespaceHealth[nsConfig.Name] = NamespaceStatus{
+			Namespace: nsConfig.Name,
+			Healthy:   false,
+			Message:   "pending first check",
+		}
 	}
 }
 
