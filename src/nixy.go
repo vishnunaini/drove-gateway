@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sync"
 	"time"
 
@@ -66,28 +67,32 @@ type DroveNamespace struct {
 // Config struct used by the template engine
 type Config struct {
 	sync.RWMutex
-	Xproxy                  string
-	Address                 string           `json:"-"`
-	Port                    string           `json:"-"`
-	PortWithTLS             bool             `json:"-" toml:"port_use_tls"`
-	TLScertFile             string           `json:"-" toml:"port_tls_certfile"`
-	TLSkeyFile              string           `json:"-" toml:"port_tls_keyfile"`
-	DroveNamespaces         []DroveNamespace `json:"-" toml:"namespaces"`
-	EventRefreshIntervalSec int              `json:"-"  toml:"event_refresh_interval_sec"`
-	Nginxplusapiaddr        string           `json:"-"`
-	NginxReloadDisabled     bool             `json:"-" toml:"nginx_reload_disabled"`
-	NginxConfig             string           `json:"-" toml:"nginx_config"`
-	NginxTemplate           string           `json:"-" toml:"nginx_template"`
-	NginxCmd                string           `json:"-" toml:"nginx_cmd"`
-	NginxIgnoreCheck        bool             `json:"-" toml:"nginx_ignore_check"`
-	LeftDelimiter           string           `json:"-" toml:"left_delimiter"`
-	RightDelimiter          string           `json:"-" toml:"right_delimiter"`
-	MaxFailsUpstream        *int             `json:"max_fails,omitempty"`
-	FailTimeoutUpstream     string           `json:"fail_timeout,omitempty"`
-	SlowStartUpstream       string           `json:"slow_start,omitempty"`
-	LogLevel                string           `json:"-" toml:"loglevel"`
-	apiTimeout              int              `json:"-" toml:"api_timeout"`
-	LastUpdates             Updates
+	Xproxy                                string
+	Address                               string           `json:"-"`
+	Port                                  string           `json:"-"`
+	PortWithTLS                           bool             `json:"-" toml:"port_use_tls"`
+	TLScertFile                           string           `json:"-" toml:"port_tls_certfile"`
+	TLSkeyFile                            string           `json:"-" toml:"port_tls_keyfile"`
+	DroveNamespaces                       []DroveNamespace `json:"-" toml:"namespaces"`
+	EventRefreshIntervalSec               int              `json:"-"  toml:"event_refresh_interval_sec"`
+	Nginxplusapiaddr                      string           `json:"-"`
+	NginxReloadDisabled                   bool             `json:"-" toml:"nginx_reload_disabled"`
+	NginxConfig                           string           `json:"-" toml:"nginx_config"`
+	NginxTemplate                         string           `json:"-" toml:"nginx_template"`
+	NginxCmd                              string           `json:"-" toml:"nginx_cmd"`
+	NginxIgnoreCheck                      bool             `json:"-" toml:"nginx_ignore_check"`
+	LeftDelimiter                         string           `json:"-" toml:"left_delimiter"`
+	RightDelimiter                        string           `json:"-" toml:"right_delimiter"`
+	MaxFailsUpstream                      int              `json:"_" toml:"nginx_max_fails"`
+	FailTimeoutUpstream                   string           `json:"_" toml:"nginx_fail_timeout"`
+	SlowStartUpstream                     string           `json:"_" toml:"nginx_slow_start"`
+	NginxMaxFailsUpstreamCompatibility    *int             `json:"-" toml:"maxfailsupstream,omitempty"`
+	NginxFailTimeoutUpstreamCompatibility *string          `json:"-" toml:"failtimeoutupstream,omitempty"`
+	NginxSlowStartUpstreamCompatibility   *string          `json:"-" toml:"slowstartupstream,omitempty"`
+	LogLevel                              string           `json:"-" toml:"loglevel"`
+	apiTimeout                            int              `json:"-" toml:"api_timeout"`
+	DnsResolutionTimeoutSec               int              `json:"-" toml:"dns_resolution_timeout_sec"`
+	LastUpdates                           Updates
 }
 
 // Updates timings used for metrics
@@ -114,9 +119,11 @@ type EndpointStatus struct {
 
 // Health struct
 type Health struct {
-	Config             Status
-	Template           Status
-	NamespaceEndpoints map[string][]EndpointStatus
+	sync.RWMutex
+	Config                Status
+	Template              Status
+	UpstreamUpdatesViaAPI Status
+	NamespaceEndpoints    map[string][]EndpointStatus
 }
 
 // Global variables
@@ -171,9 +178,20 @@ var eventRefreshSignalQueue = make(chan bool, 2)
 // Global http transport for connection reuse
 var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 
-func newHealth() Health {
-	var h Health
-	h.NamespaceEndpoints = make(map[string][]EndpointStatus)
+func newHealth() {
+	health.NamespaceEndpoints = make(map[string][]EndpointStatus)
+	health.UpstreamUpdatesViaAPI = Status{
+		Healthy: false,
+		Message: "pending first check",
+	}
+	health.Config = Status{
+		Healthy: false,
+		Message: "pending first check",
+	}
+	health.Template = Status{
+		Healthy: false,
+		Message: "pending first check",
+	}
 	for _, nsConfig := range config.DroveNamespaces {
 		e := []EndpointStatus{}
 		for _, ep := range nsConfig.Drove {
@@ -184,9 +202,8 @@ func newHealth() Health {
 			s.Message = "OK"
 			e = append(e, s)
 		}
-		h.NamespaceEndpoints[nsConfig.Name] = e
+		health.NamespaceEndpoints[nsConfig.Name] = e
 	}
-	return h
 }
 
 func setupDefaultConfig() {
@@ -204,6 +221,34 @@ func setupDefaultConfig() {
 	if config.apiTimeout <= 0 {
 		config.apiTimeout = 10
 	}
+
+	if config.DnsResolutionTimeoutSec <= 0 {
+		config.DnsResolutionTimeoutSec = 2
+	}
+	//default NginxMaxFailsUpstream is 0 as omitempty is not present
+	//Older versions of nixy used different naming for these parameters, so we support both for backward compatibility
+	if config.NginxMaxFailsUpstreamCompatibility != nil {
+		config.MaxFailsUpstream = *config.NginxMaxFailsUpstreamCompatibility
+		logger.Warn("maxfailsupstream is deprecated, please use nginx_max_fails instead")
+	}
+	if config.NginxFailTimeoutUpstreamCompatibility != nil {
+		config.FailTimeoutUpstream = *config.NginxFailTimeoutUpstreamCompatibility
+		logger.Warn("failtimeoutupstream is deprecated, please use nginx_fail_timeout instead")
+	}
+	if config.NginxSlowStartUpstreamCompatibility != nil {
+		config.SlowStartUpstream = *config.NginxSlowStartUpstreamCompatibility
+		logger.Warn("slowstartupstream is deprecated, please use nginx_slow_start instead")
+	}
+	if config.FailTimeoutUpstream == "" || !regexp.MustCompile(`^\d+s$`).MatchString(config.FailTimeoutUpstream) {
+		logger.Error("Invalid input to failtimeoutupstream " + config.FailTimeoutUpstream)
+		config.FailTimeoutUpstream = "0s"
+		logger.Error("Invalid input to failtimeoutupstream, defaulting to " + config.FailTimeoutUpstream)
+	}
+	if config.SlowStartUpstream == "" || !regexp.MustCompile(`^\d+s$`).MatchString(config.SlowStartUpstream) {
+		config.SlowStartUpstream = "0s"
+		logger.Error("Invalid input to slowstartupstream, defaulting to " + config.SlowStartUpstream)
+	}
+	logger.WithFields(logrus.Fields{"max_fails": config.MaxFailsUpstream, "fail_timeout": config.FailTimeoutUpstream, "slow_start": config.SlowStartUpstream}).Debug("Nginx upstream healthcheck parameters set")
 }
 
 func validateConfig() error {
@@ -236,31 +281,6 @@ func nixyReload(w http.ResponseWriter, r *http.Request) {
 }
 
 func nixyHealth(w http.ResponseWriter, r *http.Request) {
-	if config.NginxReloadDisabled {
-		health.Template.Message = "Templating disabled"
-		health.Template.Healthy = true
-		health.Config.Message = "Config templating disabled"
-		health.Config.Healthy = true
-	} else {
-		err := checkTmpl()
-		if err != nil {
-			health.Template.Message = err.Error()
-			health.Template.Healthy = false
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			health.Template.Message = "OK"
-			health.Template.Healthy = true
-		}
-		err = checkConf(lastConfig)
-		if err != nil {
-			health.Config.Message = err.Error()
-			health.Config.Healthy = false
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			health.Config.Message = "OK"
-			health.Config.Healthy = true
-		}
-	}
 	anyNamespaceDown := false
 	for _, nsEnpoint := range health.NamespaceEndpoints {
 		allBackendsDownForGivenNS := true
@@ -272,12 +292,14 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 		}
 		anyNamespaceDown = anyNamespaceDown || allBackendsDownForGivenNS
 	}
-	if anyNamespaceDown {
+
+	// the health is set by the respective workers, we just read it here.
+	if !health.Template.Healthy || !health.Config.Healthy || !health.UpstreamUpdatesViaAPI.Healthy || anyNamespaceDown {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 
 	w.Header().Add("Content-Type", "application/json; charset=utf-8")
-	b, _ := json.MarshalIndent(health, "", "  ")
+	b, _ := json.MarshalIndent(&health, "", "  ")
 	w.Write(b)
 	return
 }
@@ -358,7 +380,7 @@ func main() {
 			Handler: mux,
 		}
 	}
-	health = newHealth()
+	newHealth()
 	setupEndpointHealth()
 	setupPollEvents()
 	reloadWorker() //Reloader
