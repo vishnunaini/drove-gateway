@@ -96,6 +96,8 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 		var newFormattedServers []string
 		for _, t := range app.Hosts {
 			if t.PortType == "http" || t.PortType == "https" {
+				// Update Host Addr with IP to ensure correct comparison as dynamic server state is always stored as an IP and FQDN is not tracked by nginx+
+				// Local DNS resolver on Host should be reliable and maybe even serve stale records like in RFC8767 to ensure reliability, we are not going to handle DNS exceptions here and will try adding FQDN anyway
 				ipRecord, err := resolveWithIPFallback(t.Host)
 				if err != nil {
 					logger.WithFields(logrus.Fields{

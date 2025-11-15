@@ -234,30 +234,32 @@ func (manager *HaproxyManager) areServerMapsIdentical(desiredMap map[string]Host
 
 func (manager *HaproxyManager) compareServerConfigs(desiredHost Host, current runtime_models.RuntimeServer) (bool, string, string) {
 	// Resolve desired hostname to IP for a reliable comparison with HAProxy's runtime state.
-	desiredIP, err := resolveWithIPFallback(desiredHost.Host)
-	if err != nil {
-		logger.WithFields(logrus.Fields{"hostname": desiredHost.Host, "error": err}).Warning("Failed to resolve hostname; using hostname for comparison")
-	}
-	resolveCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if resolvedIP, err := resolveHostnameToIP(resolveCtx, desiredHost.Host); err == nil {
-		desiredIP = resolvedIP
-	}
 	portMatches := current.Port != nil && *current.Port == int64(desiredHost.Port)
-	addressMatches := current.Address == desiredIP
+	addressMatches := current.Address == desiredHost.Host
 	adminStateMatches := current.AdminState == "ready"
 	// We only check for 'up' or 'maint' as operational state can fluctuate (e.g., 'going down').
 	// A server in 'maint' is operationally down but administratively configured, so we consider it a match if we want it 'up'.
 	opStateMatches := current.OperationalState == "up" || current.OperationalState == "maint"
 	serverConfigsMatch := portMatches && addressMatches && adminStateMatches && opStateMatches
-	return serverConfigsMatch, desiredIP, current.Address
+	return serverConfigsMatch, desiredHost.Host, current.Address
+}
+
+// Update Host Addr with IP to ensure correct comparison as dynamic server state is always stored as an IP and FQDN is not tracked by client-native library
+// Local DNS resolver on Host should be reliable and maybe even serve stale records like in RFC8767 to ensure reliability, we are not going to handle DNS exceptions here and will try adding FQDN anyway
+func (manager *HaproxyManager) updateHostWithIP(host Host) Host {
+	ip, err := resolveWithIPFallback(host.Host)
+	if err != nil {
+		logger.WithFields(logrus.Fields{"host": host.Host}).Error("Error during dns resolution")
+	}
+	host.Host = ip
+	return host
 }
 
 func (manager *HaproxyManager) buildDesiredServerMap(desiredHosts []Host) map[string]Host {
 	serverMap := make(map[string]Host)
 	for _, host := range desiredHosts {
 		serverName := GlobalProxyManager.GenerateStableServerName(host)
-		serverMap[serverName] = host
+		serverMap[serverName] = manager.updateHostWithIP(host)
 	}
 	return serverMap
 }
@@ -323,12 +325,7 @@ func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerM
 // only use IP while adding server, not fqdn. HAProxy resolves the hostname only at startup/reload and dynamic servers don't support fqdn resolution
 func (manager *HaproxyManager) addNewServer(backend, serverName string, host Host) error {
 	logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Info("Adding new server")
-	desiredIP, err := resolveWithIPFallback(host.Host)
-	if err != nil {
-		logger.WithFields(logrus.Fields{"hostname": host.Host, "error": err}).Warning("Failed to resolve hostname; using hostname for server addition")
-	}
-	// Resolve desired hostname to IP for HAProxy server addition.
-
+	// Ensure you resolve desired hostname to IP for HAProxy server addition. Done while building desiredServerMap
 	if host.PortType != "http" && host.PortType != "https" {
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Warning("Non-HTTP/HTTPS port type detected. Skipping addition of this server via HAProxy runtime API.")
 		return nil
@@ -344,7 +341,7 @@ func (manager *HaproxyManager) addNewServer(backend, serverName string, host Hos
 
 	}
 
-	if err := manager.client.AddServer(backend, serverName, fmt.Sprintf("%s:%d %s", desiredIP, host.Port, attributes_string)); err != nil {
+	if err := manager.client.AddServer(backend, serverName, fmt.Sprintf("%s:%d %s", host.Host, host.Port, attributes_string)); err != nil {
 		Metrics.HaproxyAPICallsFailed.WithLabelValues("add_server").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")
 		return err
