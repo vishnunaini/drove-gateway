@@ -309,6 +309,12 @@ func setupPollEvents() {
 }
 
 func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
+	health.Lock()
+	defer health.Unlock()
+
+	healthyCount := 0
+	configuredCount := len(health.NamespaceEndpoints[namespace])
+
 	for i, es := range health.NamespaceEndpoints[namespace] {
 		req, err := http.NewRequest("GET", es.Endpoint+"/apis/v1/ping", nil)
 		if err != nil {
@@ -356,11 +362,29 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 		}
 		health.NamespaceEndpoints[namespace][i].Healthy = true
 		health.NamespaceEndpoints[namespace][i].Message = "OK"
+		healthyCount++
 		logger.WithFields(logrus.Fields{
 			"host":      es.Endpoint,
 			"namespace": namespace,
-		}).Debug(" Endpoint is healthy")
+		}).Trace(" Endpoint is healthy")
 	}
+
+	// Set the overall health status for the namespace
+	nsHealth := health.NamespaceHealth[namespace]
+	if healthyCount == configuredCount {
+		nsHealth.Healthy = true
+		nsHealth.Message = "All endpoints are healthy"
+	} else if healthyCount > 0 {
+		nsHealth.Healthy = true // Still considered healthy if at least one endpoint is up
+		nsHealth.Message = fmt.Sprintf("%d out of %d endpoints are healthy", healthyCount, configuredCount)
+	} else {
+		nsHealth.Healthy = false
+		nsHealth.Message = "All endpoints are down"
+	}
+	health.NamespaceHealth[namespace] = nsHealth
+
+	Metrics.GaugeConfiguredEndpoints.WithLabelValues(namespace).Set(float64(configuredCount))
+	Metrics.GaugeHealthyEndpoints.WithLabelValues(namespace).Set(float64(healthyCount))
 }
 
 func endpointHealth(namespace string) {
