@@ -397,7 +397,7 @@ func getTmpl(proxyTemplatePath string) (*template.Template, error) {
 			Delims(config.LeftDelimiter, config.RightDelimiter).
 			Funcs(template.FuncMap{
 				"hasPrefix": strings.HasPrefix,
-				"hasSuffix": strings.HasPrefix,
+				"hasSuffix": strings.HasSuffix,
 				"contains":  strings.Contains,
 				"split":     strings.Split,
 				"join":      strings.Join,
