@@ -55,9 +55,6 @@ func (pmgr *NginxProxyManager) IsRuntimeAPIUpstreamUpdateEnabled() bool {
 }
 
 func (pmgr *NginxProxyManager) Reload() error {
-	if pmgr.config.NginxIgnoreCheck {
-		return nil
-	}
 	if err := pmgr.CheckConfig(); err != nil {
 		return err
 	}
@@ -120,9 +117,6 @@ func (pmgr *HAProxyManager) IsRuntimeAPIUpstreamUpdateEnabled() bool {
 }
 
 func (pmgr *HAProxyManager) Reload() error {
-	if pmgr.config.HaproxyIgnoreCheck {
-		return nil
-	}
 	if err := pmgr.CheckConfig(); err != nil {
 		return err
 	}
