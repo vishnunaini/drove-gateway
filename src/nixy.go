@@ -433,6 +433,37 @@ func nixyVersion(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+func updateHealthSection(section string, status bool, message string) {
+	var statusFloat float64
+	if status {
+		statusFloat = 1.0
+	} else {
+		statusFloat = 0.0
+	}
+	health.Lock()
+	switch section {
+	case "ResolverHealth":
+		health.ResolverHealth.Healthy = status
+		health.ResolverHealth.Message = message
+		Metrics.GaugeResolverHealthy.Set(statusFloat)
+	case "Config":
+		health.Config.Healthy = status
+		health.Config.Message = message
+		Metrics.GaugeConfigGenerationHealthy.Set(statusFloat)
+	case "Template":
+		health.Template.Healthy = status
+		health.Template.Message = message
+		Metrics.GaugeTemplateRenderingHealthy.Set(statusFloat)
+	case "UpstreamUpdatesViaAPI":
+		health.UpstreamUpdatesViaAPI.Healthy = status
+		health.UpstreamUpdatesViaAPI.Message = message
+		Metrics.GaugeUpstreamUpdatesViaAPIHealthy.Set(statusFloat)
+	default:
+		return
+	}
+	health.Unlock()
+}
+
 // Implement ProxyManager interface for NginxAPIManager
 func (manager *NginxAPIManager) Reconcile(data *RenderingData) error {
 	return manager.ReconcileAllVhosts(data)

@@ -315,24 +315,17 @@ func writeConf(data *RenderingData) error {
 
 	err = renderConfigFromTemplate(template, data, tmpFile)
 	if err != nil {
-		health.Lock()
-		health.Config.Healthy = false
-		health.Config.Message = err.Error()
-		health.Unlock()
+		updateHealthSection("Config", false, err.Error())
 		return err
 	}
 	config.LastUpdates.LastConfigRendered = time.Now()
 	err = checkConf(tmpFile.Name())
-	health.Lock()
 	if err != nil {
-		health.Config.Healthy = false
-		health.Config.Message = err.Error()
+		updateHealthSection("Config", false, err.Error())
 		logger.Error("Error in config generated")
 	} else {
-		health.Config.Healthy = true
-		health.Config.Message = "OK"
+		updateHealthSection("Config", true, "OK")
 	}
-	health.Unlock()
 	if err != nil {
 		return err
 	}
@@ -376,16 +369,10 @@ func resolveWithIPFallback(hostname string) (string, error) {
 			"hostname": hostname,
 			"error":    err,
 		}).Warning("DNS resolution failed, falling back to hostname")
-		health.Lock()
-		health.ResolverHealth.Healthy = false
-		health.ResolverHealth.Message = fmt.Sprintf("DNS resolution failed for %s: %v", hostname, err)
-		health.Unlock()
+		updateHealthSection("ResolverHealth", false, fmt.Sprintf("DNS resolution failed for %s: %v", hostname, err))
 		return hostname, err
 	}
-	health.Lock()
-	health.ResolverHealth.Healthy = true
-	health.ResolverHealth.Message = "OK"
-	health.Unlock()
+	updateHealthSection("ResolverHealth", true, "OK")
 	return ip, nil
 }
 
@@ -426,18 +413,12 @@ func getTmpl(proxyTemplatePath string) (*template.Template, error) {
 				"error": tmplCacheErr,
 				"file":  proxyTemplatePath,
 			}).Error("unable to read template")
-			health.Lock()
-			health.Template.Healthy = false
-			health.Template.Message = tmplCacheErr.Error()
-			health.Unlock()
+			updateHealthSection("Template", false, tmplCacheErr.Error())
 		} else {
 			logger.WithFields(logrus.Fields{
 				"file": proxyTemplatePath,
 			}).Info("Template read successfully")
-			health.Lock()
-			health.Template.Healthy = true
-			health.Template.Message = "OK"
-			health.Unlock()
+			updateHealthSection("Template", true, "OK")
 		}
 	})
 	return tmplCache, tmplCacheErr

@@ -45,7 +45,7 @@ func (pmgr *NginxProxyManager) Reconcile(data *RenderingData) error {
 }
 
 func (pmgr *NginxProxyManager) UpdateAPIUpdatesHealthStatus(status bool, message string) {
-	updateHealthForUpstreamUpdateAPI(status, message)
+	updateHealthSection("UpstreamUpdatesAPI", status, message)
 }
 
 func (pmgr *NginxProxyManager) Reload() error {
@@ -105,7 +105,7 @@ func (pmgr *HAProxyManager) Reconcile(data *RenderingData) error {
 }
 
 func (pmgr *HAProxyManager) UpdateAPIUpdatesHealthStatus(status bool, message string) {
-	updateHealthForUpstreamUpdateAPI(status, message)
+	updateHealthSection("UpstreamUpdatesAPI", status, message)
 }
 
 func (pmgr *HAProxyManager) Reload() error {
@@ -184,14 +184,6 @@ func setupGlobalProxyManager() (bool, ProxyManager) {
 		return false, nil
 	}
 	return upstreamUpdateAPIEnabled, GlobalProxyManager
-}
-
-// updateHealthForUpstreamUpdateAPI safely updates the health status and message for upstream API updates.
-func updateHealthForUpstreamUpdateAPI(status bool, message string) {
-	health.Lock()
-	health.UpstreamUpdatesViaAPI.Healthy = status
-	health.UpstreamUpdatesViaAPI.Message = message
-	health.Unlock()
 }
 
 // runCommand executes a command and returns a formatted error if it fails.
