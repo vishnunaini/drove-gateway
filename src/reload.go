@@ -214,13 +214,17 @@ func writeConf(data *RenderingData) error {
 	lastConfig = tmpFile.Name()
 	err = template.Execute(tmpFile, &data)
 	if err != nil {
+		updateHealthSection("Config", false, err.Error())
 		return err
 	}
 	config.LastUpdates.LastConfigRendered = time.Now()
 	err = checkConf(tmpFile.Name())
 	if err != nil {
+		updateHealthSection("Config", false, err.Error())
 		logger.Error("Error in config generated")
 		return err
+	} else {
+		updateHealthSection("Config", true, "OK")
 	}
 	logger.WithFields(logrus.Fields{
 		"file": config.NginxConfig,
@@ -310,7 +314,7 @@ func nginxPlus(data *RenderingData) error {
 		logger.WithFields(logrus.Fields{
 			"error": error,
 		}).Error("unable to make call to nginx plus")
-		updateHealthForUpstreamUpdateAPI(false, error.Error())
+		updateHealthSection("UpstreamUpdatesViaAPI", false, error.Error())
 		return error
 	}
 
@@ -398,7 +402,7 @@ func nginxPlus(data *RenderingData) error {
 				if err != nil {
 					logger.Error("unable to add initial server to new upstream: ", err)
 					reconciliationFailedApps[app.Vhost] = true
-					updateHealthForUpstreamUpdateAPI(false, err.Error())
+					updateHealthSection("UpstreamUpdatesViaAPI", false, err.Error())
 					continue
 				}
 			} else {
@@ -444,21 +448,21 @@ func nginxPlus(data *RenderingData) error {
 				"vhost": app.Vhost,
 				"error": err,
 			}).Error("unable to check if upstream exists in nginx plus")
-			updateHealthForUpstreamUpdateAPI(false, err.Error())
+			updateHealthSection("UpstreamUpdatesViaAPI", false, err.Error())
 			return err
 		}
 		reconciledApps[app.Vhost] = true
 	}
 	if len(reconciliationFailedApps) > 0 {
 		logger.WithField("failed_apps", reconciliationFailedApps).Error("Failed to reconcile some nginx plus vhosts")
-		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile some nginx plus vhosts: "+fmt.Sprintf("%v", reconciliationFailedApps)).Error())
+		updateHealthSection("UpstreamUpdatesViaAPI", false, errors.New("failed to reconcile some nginx plus vhosts: "+fmt.Sprintf("%v", reconciliationFailedApps)).Error())
 	}
 	if len(reconciledApps) == 0 {
-		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile any nginx plus vhosts").Error())
+		updateHealthSection("UpstreamUpdatesViaAPI", false, errors.New("failed to reconcile any nginx plus vhosts").Error())
 		return errors.New("failed to reconcile any nginx plus vhosts")
 	}
 	logger.Info("Successfully reconciled all nginx plus vhosts")
-	updateHealthForUpstreamUpdateAPI(true, "OK")
+	updateHealthSection("UpstreamUpdatesViaAPI", true, "OK")
 	return nil
 }
 
@@ -482,11 +486,11 @@ func getTmpl() (*template.Template, error) {
 	logger.WithFields(logrus.Fields{
 		"file": config.NginxTemplate,
 	}).Info("Reading template")
-	return template.New(filepath.Base(config.NginxTemplate)).
+	t, err := template.New(filepath.Base(config.NginxTemplate)).
 		Delims(config.LeftDelimiter, config.RightDelimiter).
 		Funcs(template.FuncMap{
 			"hasPrefix": strings.HasPrefix,
-			"hasSuffix": strings.HasPrefix,
+			"hasSuffix": strings.HasSuffix,
 			"contains":  strings.Contains,
 			"split":     strings.Split,
 			"join":      strings.Join,
@@ -496,6 +500,13 @@ func getTmpl() (*template.Template, error) {
 			"getenv":    os.Getenv,
 			"datetime":  time.Now}).
 		ParseFiles(config.NginxTemplate)
+	if err != nil {
+		updateHealthSection("Template", false, err.Error())
+	} else {
+		updateHealthSection("Template", true, "OK")
+	}
+	return t, err
+
 }
 
 func checkConf(path string) error {
