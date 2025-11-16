@@ -45,7 +45,7 @@ func (pmgr *NginxProxyManager) Reconcile(data *RenderingData) error {
 }
 
 func (pmgr *NginxProxyManager) UpdateAPIUpdatesHealthStatus(status bool, message string) {
-	updateHealthSection("UpstreamUpdatesAPI", status, message)
+	updateHealthSection("UpstreamUpdatesViaAPI", status, message)
 }
 
 func (pmgr *NginxProxyManager) Reload() error {
@@ -105,7 +105,7 @@ func (pmgr *HAProxyManager) Reconcile(data *RenderingData) error {
 }
 
 func (pmgr *HAProxyManager) UpdateAPIUpdatesHealthStatus(status bool, message string) {
-	updateHealthSection("UpstreamUpdatesAPI", status, message)
+	updateHealthSection("UpstreamUpdatesViaAPI", status, message)
 }
 
 func (pmgr *HAProxyManager) Reload() error {
