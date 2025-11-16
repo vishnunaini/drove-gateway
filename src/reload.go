@@ -51,7 +51,7 @@ func reload() error {
 	createRenderingData(&data)
 	config.LastUpdates.LastSync = time.Now()
 
-	if !upstreamUpdateAPIEnabled {
+	if !GlobalProxyManager.IsRuntimeAPIUpstreamUpdateEnabled() {
 		logger.Debug("Runtime API calls to update upstreams are disabled")
 
 		GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK: Not in use, full reloads are enabled")

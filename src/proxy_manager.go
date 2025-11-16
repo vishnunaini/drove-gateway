@@ -18,13 +18,15 @@ type ProxyManager interface {
 	CheckConfig() error
 	GetTempFilePattern() string
 	Reconcile(data *RenderingData) error
+	IsRuntimeAPIUpstreamUpdateEnabled() bool
 	UpdateAPIUpdatesHealthStatus(status bool, message string)
 	Reload() error
 }
 
 type NginxProxyManager struct {
-	config     *Config
-	apiManager *NginxAPIManager
+	config             *Config
+	apiManagerDisabled bool
+	apiManager         *NginxAPIManager
 }
 
 func (pmgr *NginxProxyManager) CheckConfig() error {
@@ -46,6 +48,10 @@ func (pmgr *NginxProxyManager) Reconcile(data *RenderingData) error {
 
 func (pmgr *NginxProxyManager) UpdateAPIUpdatesHealthStatus(status bool, message string) {
 	updateHealthSection("UpstreamUpdatesViaAPI", status, message)
+}
+
+func (pmgr *NginxProxyManager) IsRuntimeAPIUpstreamUpdateEnabled() bool {
+	return !pmgr.apiManagerDisabled
 }
 
 func (pmgr *NginxProxyManager) Reload() error {
@@ -77,8 +83,9 @@ func (pmgr *NginxProxyManager) GenerateStableServerName(host Host) string {
 }
 
 type HAProxyManager struct {
-	config     *Config
-	apiManager *HaproxyManager
+	config             *Config
+	apiManagerDisabled bool
+	apiManager         *HaproxyManager
 }
 
 func (pmgr *HAProxyManager) CheckConfig() error {
@@ -106,6 +113,10 @@ func (pmgr *HAProxyManager) Reconcile(data *RenderingData) error {
 
 func (pmgr *HAProxyManager) UpdateAPIUpdatesHealthStatus(status bool, message string) {
 	updateHealthSection("UpstreamUpdatesViaAPI", status, message)
+}
+
+func (pmgr *HAProxyManager) IsRuntimeAPIUpstreamUpdateEnabled() bool {
+	return !pmgr.apiManagerDisabled
 }
 
 func (pmgr *HAProxyManager) Reload() error {
@@ -143,47 +154,60 @@ func (pmgr *HAProxyManager) GenerateStableServerName(host Host) string {
 	return fmt.Sprintf("%s%s%s%s%d", pmgr.config.HaproxyServerNamePrefix, pmgr.config.HaproxyServerNameHostPortSeparator, sanitizer.Replace(host.Host), pmgr.config.HaproxyServerNameHostPortSeparator, host.Port)
 }
 
-func setupGlobalProxyManager() (bool, ProxyManager) {
+func setupGlobalProxyManager() ProxyManager {
 	var GlobalProxyManager ProxyManager
-	var upstreamUpdateAPIEnabled bool
 	// Conditionally initialize runtime API manager at startup
-	if config.ProxyPlatform == "nginx" && len(config.Nginxplusapiaddr) > 0 {
-		logger.Debug("Platform: " + config.ProxyPlatform + " API addr: " + config.Nginxplusapiaddr)
-		mgr, err := NewNginxAPIManager(
-			config.Nginxplusapiaddr,
-			time.Duration(config.apiTimeout)*time.Second,
-			config.NginxMaxFailsUpstream,
-			config.NginxFailTimeoutUpstream,
-			config.NginxSlowStartUpstream,
-		)
-		if err != nil {
-			logger.WithFields(logrus.Fields{
-				"error": err.Error(),
-			}).Fatal("unable to create nginx api manager at startup; exiting nixy")
+	if config.ProxyPlatform == "nginx" {
+		if len(config.Nginxplusapiaddr) > 0 {
+			logger.Debug("Platform: " + config.ProxyPlatform + " API addr: " + config.Nginxplusapiaddr)
+			mgr, err := NewNginxAPIManager(
+				config.Nginxplusapiaddr,
+				time.Duration(config.apiTimeout)*time.Second,
+				config.NginxMaxFailsUpstream,
+				config.NginxFailTimeoutUpstream,
+				config.NginxSlowStartUpstream,
+			)
+			if err != nil {
+				logger.WithFields(logrus.Fields{
+					"error": err.Error(),
+				}).Fatal("unable to create nginx api manager at startup; exiting nixy")
+			}
+			GlobalProxyManager = &NginxProxyManager{config: &config, apiManagerDisabled: false, apiManager: mgr}
+			logger.Info("Nginx http api client initialized at startup")
+		} else {
+			logger.Info("No runtime API based upstream updates enabled at startup as nginx api address is not configured")
+			logger.Debug("Platform:" + config.ProxyPlatform)
+			GlobalProxyManager = &NginxProxyManager{config: &config, apiManagerDisabled: true, apiManager: nil}
+			logger.Info("Nginx http api client not initialized at startup as nginx api address is not configured")
 		}
-		GlobalProxyManager = &NginxProxyManager{config: &config, apiManager: mgr}
-		upstreamUpdateAPIEnabled = true
-		logger.Info("Nginx http api client initialized at startup")
-	} else if config.ProxyPlatform == "haproxy" && len(config.HaproxySocketAddr) > 0 {
-		logger.Debug("Platform: " + config.ProxyPlatform + " Socket addr: " + config.HaproxySocketAddr)
-		logger.Debug("Runtime API add server default-server attributes:" + config.HaproxyAddServerAttributesString)
-		logger.Debug("Runtime API add server ssl attributes:" + config.HaproxyAddServerSSLAttributesString)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.apiTimeout)*time.Second)
-		defer cancel()
-		mgr, err := NewHaproxyManager(ctx, config.HaproxySocketAddr, config.HaproxyDisableLargeBackendCountOptimisation, config.HaproxyAddServerAttributesString, config.HaproxyAddServerSSLAttributesString)
-		if err != nil {
-			logger.WithFields(logrus.Fields{
-				"error": err.Error(),
-			}).Fatal("unable to create haproxy manager at startup; exiting nixy")
+
+	} else if config.ProxyPlatform == "haproxy" {
+
+		if len(config.HaproxySocketAddr) > 0 {
+			logger.Debug("Platform: " + config.ProxyPlatform + " Socket addr: " + config.HaproxySocketAddr)
+			logger.Debug("Runtime API add server default-server attributes:" + config.HaproxyAddServerAttributesString)
+			logger.Debug("Runtime API add server ssl attributes:" + config.HaproxyAddServerSSLAttributesString)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.apiTimeout)*time.Second)
+			defer cancel()
+			mgr, err := NewHaproxyManager(ctx, config.HaproxySocketAddr, config.HaproxyDisableLargeBackendCountOptimisation, config.HaproxyAddServerAttributesString, config.HaproxyAddServerSSLAttributesString)
+			if err != nil {
+				logger.WithFields(logrus.Fields{
+					"error": err.Error(),
+				}).Fatal("unable to create haproxy manager at startup; exiting nixy")
+			}
+			GlobalProxyManager = &HAProxyManager{config: &config, apiManagerDisabled: false, apiManager: mgr}
+			logger.Info("Haproxy Runtime API client initialized at startup")
+		} else {
+			logger.Info("No runtime API based upstream updates enabled at startup as haproxy socket address is not configured")
+			logger.Debug("Platform:" + config.ProxyPlatform)
+			GlobalProxyManager = &HAProxyManager{config: &config, apiManagerDisabled: true, apiManager: nil}
+			logger.Info("Haproxy Runtime API client not initialized at startup as haproxy socket address is not configured")
 		}
-		GlobalProxyManager = &HAProxyManager{config: &config, apiManager: mgr}
-		upstreamUpdateAPIEnabled = true
-		logger.Info("Haproxy Runtime API client initialized at startup")
 	} else {
-		logger.Info("No runtime API based upstream updates enabled at startup")
-		return false, nil
+		logger.WithFields(logrus.Fields{"platform": config.ProxyPlatform, config.Nginxplusapiaddr: config.Nginxplusapiaddr, config.HaproxySocketAddr: config.HaproxySocketAddr}).Fatal("Invalid configuration. Exiting nixy")
+		return nil
 	}
-	return upstreamUpdateAPIEnabled, GlobalProxyManager
+	return GlobalProxyManager
 }
 
 // runCommand executes a command and returns a formatted error if it fails.

@@ -173,9 +173,6 @@ var Metrics DroveGatewayPrometheusMetrics
 // Global proxy manager instance
 var GlobalProxyManager ProxyManager
 
-// Use of API based upstream updates
-var upstreamUpdateAPIEnabled bool
-
 // set log level
 func setloglevel() {
 	logLevel := logrus.InfoLevel
@@ -311,7 +308,6 @@ func setupDefaultConfig() {
 			logger.Warn("slowstartupstream is deprecated, please use nginx_slow_start instead")
 		}
 		if config.NginxFailTimeoutUpstream == "" || !regexp.MustCompile(`^\d+s$`).MatchString(config.NginxFailTimeoutUpstream) {
-			logger.Error("Invalid input to failtimeoutupstream " + config.NginxFailTimeoutUpstream)
 			config.NginxFailTimeoutUpstream = "0s"
 			logger.Error("Invalid input to failtimeoutupstream, defaulting to " + config.NginxFailTimeoutUpstream)
 		}
@@ -507,7 +503,10 @@ func main() {
 	setupDefaultConfig()
 	setupPrometheusMetrics()
 	setupDataManager()
-	upstreamUpdateAPIEnabled, GlobalProxyManager = setupGlobalProxyManager()
+	GlobalProxyManager = setupGlobalProxyManager()
+	if GlobalProxyManager == nil {
+		logger.Fatal("Failed to setup global proxy manager, exiting nixy")
+	}
 
 	mux := mux.NewRouter()
 	mux.HandleFunc("/", nixyVersion)
