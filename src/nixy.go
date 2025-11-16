@@ -338,6 +338,33 @@ func nixyVersion(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+func updateHealthSection(section string, status bool, message string) {
+	var statusFloat float64
+	if status {
+		statusFloat = 1.0
+	} else {
+		statusFloat = 0.0
+	}
+	health.Lock()
+	switch section {
+	case "Config":
+		health.Config.Healthy = status
+		health.Config.Message = message
+		Metrics.GaugeConfigGenerationHealthy.Set(statusFloat)
+	case "Template":
+		health.Template.Healthy = status
+		health.Template.Message = message
+		Metrics.GaugeTemplateRenderingHealthy.Set(statusFloat)
+	case "UpstreamUpdatesViaAPI":
+		health.UpstreamUpdatesViaAPI.Healthy = status
+		health.UpstreamUpdatesViaAPI.Message = message
+		Metrics.GaugeUpstreamUpdatesViaAPIHealthy.Set(statusFloat)
+	default:
+		return
+	}
+	health.Unlock()
+}
+
 func main() {
 	configtoml := flag.String("f", "nixy.toml", "Path to config. (default nixy.toml)")
 	versionflag := flag.Bool("v", false, "prints current nixy version")

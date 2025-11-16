@@ -9,9 +9,12 @@ import (
 const ns = "drove_gateway"
 
 type DroveGatewayPrometheusMetrics struct {
-	CountFailedReloads      prometheus.Counter
-	CountSuccessfulReloads  prometheus.Counter
-	HistogramReloadDuration prometheus.Histogram
+	CountFailedReloads                prometheus.Counter
+	CountSuccessfulReloads            prometheus.Counter
+	HistogramReloadDuration           prometheus.Histogram
+	GaugeUpstreamUpdatesViaAPIHealthy prometheus.Gauge
+	GaugeConfigGenerationHealthy      prometheus.Gauge
+	GaugeTemplateRenderingHealthy     prometheus.Gauge
 
 	CountInvalidSubdomainLabelWarnings    prometheus.Counter
 	CountDuplicateSubdomainLabelWarnings  *prometheus.CounterVec
@@ -92,6 +95,27 @@ func setupPrometheusMetrics() {
 			Help:      "Total number of endpoint down errors",
 		},
 		[]string{"namespace"},
+	)
+	Metrics.GaugeConfigGenerationHealthy = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "config_generation_healthy",
+			Help:      "1 if config generation is healthy, 0 otherwise",
+		},
+	)
+	Metrics.GaugeTemplateRenderingHealthy = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "template_rendering_healthy",
+			Help:      "1 if template rendering is healthy, 0 otherwise",
+		},
+	)
+	Metrics.GaugeUpstreamUpdatesViaAPIHealthy = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "upstream_updates_via_api_healthy",
+			Help:      "1 if upstream updates via API is healthy, 0 otherwise",
+		},
 	)
 	Metrics.GaugeAllEndpointsDown = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{

@@ -90,13 +90,6 @@ func reload() error {
 
 }
 
-func updateHealthForUpstreamUpdateAPI(status bool, message string) {
-	health.Lock()
-	health.UpstreamUpdatesViaAPI.Healthy = status
-	health.UpstreamUpdatesViaAPI.Message = message
-	health.Unlock()
-}
-
 func updateAndReloadConfig(data *RenderingData) error {
 	start := time.Now()
 	config.LastUpdates.LastSync = time.Now()
