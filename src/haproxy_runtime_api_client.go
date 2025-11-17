@@ -156,7 +156,7 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 			Metrics.HaproxyAPICallsSuccessful.WithLabelValues("get_servers_state").Inc()
 		}
 
-		if backendErr = manager.reconcileBackend(backend, hosts, currentServersForBackend); err != nil {
+		if backendErr = manager.reconcileBackend(backend, hosts, currentServersForBackend); backendErr != nil {
 			reconciliationFailedBackends[backend] = true
 			logger.WithFields(logrus.Fields{
 				"backend": backend,
@@ -208,6 +208,7 @@ func (manager *HaproxyManager) reconcileBackend(backend string, desiredHosts []H
 	}
 
 	if len(errs) > 0 {
+		logger.WithField("backend", backend).Error("Errors occurred during reconciliation: " + fmt.Sprintf("%v", errs))
 		return fmt.Errorf("failed to reconcile HAProxy backend: %v", errs)
 	}
 
@@ -315,7 +316,7 @@ func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerM
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("errors in Add/Update servers: %s", strings.Join(errs, "; "))
+		return errors.New(fmt.Sprintf("errors in Add/Update servers: %s", strings.Join(errs, "; ")))
 	}
 	return nil
 }

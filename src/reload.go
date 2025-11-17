@@ -72,7 +72,7 @@ func reload() error {
 		//For HAProxy, config is generated but not loaded even when reload is disabled as there is no other way to persist state across reloads
 		//For Nginx+, ngx http_api maintains it's own state files if referenced in the running nginx config. Hence no templating is done at all when reload is disabled
 		if ConfigReloadDisabled {
-			logger.Debug(data.ProxyPlatform + ": Template reload has been disabled")
+			logger.Warn(data.ProxyPlatform + ":  reload has been disabled")
 		} else {
 			vhosts := db.ReadAllKnownVhosts()
 			lastKnownVhosts := db.ReadLastKnownVhosts()

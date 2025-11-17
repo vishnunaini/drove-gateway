@@ -289,6 +289,9 @@ func setupDefaultConfig() {
 		ReloadCmd = config.NginxCmd
 		ProgramCmd = config.NginxCmd
 		ConfigReloadDisabled = config.NginxReloadDisabled
+		if ConfigReloadDisabled {
+			logger.Warn("Nginx reloads are disabled. Although reloads won't be done it is important that the configured config uses upstream state file block in upstream block so as to allow nginx_http_api to update upstreams to state files")
+		}
 		ProgramCmdConfFileArg = "-c"
 		ProgramCmdConfTestArg = "-t"
 		//default NginxMaxFailsUpstream is 0 as omitempty is not present
@@ -320,6 +323,9 @@ func setupDefaultConfig() {
 		ReloadCmd = config.HaproxyReloadCmd
 		ProgramCmd = config.HaproxyCmd
 		ConfigReloadDisabled = config.HaproxyReloadDisabled
+		if ConfigReloadDisabled {
+			logger.Warning("Haproxy reloads are DISABLED. Unlike in nginx, This is NOT a recommended configuration as haproxy is dependent on config to maintain state across restarts. haproxy's reload from global state file feature should be used and restarts accordingly handled\n")
+		}
 		ProgramCmdConfFileArg = "-f"
 		ProgramCmdConfTestArg = "-c"
 		if config.HaproxyBackendNameSeparator == "" {
