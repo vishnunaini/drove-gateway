@@ -119,19 +119,19 @@ func reload() error {
 			}
 		}
 	}
+	elapsed := time.Since(start)
+	_ = db.UpdateReloadTimestamps(start, elapsed)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
-		}).Error("unable to generate " + data.ProxyPlatform + " config")
+		}).Error("unable to complete reload/reconciliation")
 		go Metrics.CountFailedReloads.Inc()
 		return err
 	}
-	elapsed := time.Since(start)
 	logger.WithFields(logrus.Fields{
 		"took": elapsed,
 	}).Debug("reload worker completed")
 
-	_ = db.UpdateReloadTimestamps(start, elapsed)
 	return nil
 
 }
