@@ -393,12 +393,13 @@ func nginxPlus(data *RenderingData) error {
 				ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 				defer cancel()
 				err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
+			waitGroup:
 				for err != nil {
 					select {
 					case <-ctx.Done():
 						err = fmt.Errorf("context timeout waiting for upstream '%s' to exist", upstreamtocheck)
 						logger.WithError(err).Error("Failed to confirm upstream creation")
-						break
+						break waitGroup
 					default:
 						time.Sleep(5 * time.Millisecond)
 						err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
@@ -465,6 +466,7 @@ func nginxPlus(data *RenderingData) error {
 	if len(reconciliationFailedApps) > 0 {
 		logger.WithField("failed_apps", reconciliationFailedApps).Error("Failed to reconcile some nginx plus vhosts")
 		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile some nginx plus vhosts: "+fmt.Sprintf("%v", reconciliationFailedApps)).Error())
+		return errors.New("failed to reconcile some nginx plus vhosts: " + fmt.Sprintf("%v", reconciliationFailedApps))
 	}
 	if len(reconciledApps) == 0 {
 		updateHealthForUpstreamUpdateAPI(false, errors.New("failed to reconcile any nginx plus vhosts").Error())
