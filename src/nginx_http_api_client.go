@@ -151,13 +151,14 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 			if err != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 				err = manager.client.CheckIfUpstreamExists(upstreamtocheck)
+			waitGroup:
 				for err != nil {
 					select {
 					case <-ctx.Done():
 						logger.WithFields(logrus.Fields{
 							"Adding fresh upstream for": upstreamtocheck,
 						}).Error("Context timeout waiting for CheckIfUpstreamExists")
-						break
+						break waitGroup
 					default:
 						time.Sleep(5 * time.Millisecond)
 						err = manager.client.CheckIfUpstreamExists(upstreamtocheck)
@@ -236,7 +237,7 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 			resultLabel = "error"
 			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, errors.New("failed to reconcile any nginx plus vhosts").Error())
 		}
-		return errors.Join(errors.New("failed to reconcile any nginx plus vhosts"), err)
+		return errors.Join(errors.New("failed to reconcile nginx plus vhosts"), err)
 	} else if len(reconciliationFailedApps) == 0 {
 		resultLabel = "success"
 		logger.Info("Successfully reconciled all nginx plus vhosts")
