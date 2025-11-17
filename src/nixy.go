@@ -162,7 +162,6 @@ var logger = logrus.New()
 var ConfigPath string
 var templatePath string
 var ReloadCmd string
-var IgnoreCheck bool
 var ProgramCmd string
 var ConfigReloadDisabled bool
 var ProgramCmdConfFileArg string
@@ -289,7 +288,6 @@ func setupDefaultConfig() {
 		templatePath = config.NginxTemplate
 		ReloadCmd = config.NginxCmd
 		ProgramCmd = config.NginxCmd
-		IgnoreCheck = config.NginxIgnoreCheck
 		ConfigReloadDisabled = config.NginxReloadDisabled
 		ProgramCmdConfFileArg = "-c"
 		ProgramCmdConfTestArg = "-t"
@@ -321,7 +319,6 @@ func setupDefaultConfig() {
 		templatePath = config.HaproxyTemplate
 		ReloadCmd = config.HaproxyReloadCmd
 		ProgramCmd = config.HaproxyCmd
-		IgnoreCheck = config.HaproxyIgnoreCheck
 		ConfigReloadDisabled = config.HaproxyReloadDisabled
 		ProgramCmdConfFileArg = "-f"
 		ProgramCmdConfTestArg = "-c"
@@ -359,12 +356,17 @@ func validateConfig() error {
 		if (config.HaproxyReloadDisabled) && (config.HaproxySocketAddr == "") {
 			return errors.New("haproxy socket adress is mandatory when reloads are disabled, can't update runtime servers")
 		}
-
+		if config.HaproxyIgnoreCheck {
+			logger.Warn("Haproxy config check is disabled, this may lead to invalid configs being applied")
+		}
 	}
 
 	if config.ProxyPlatform == "nginx" {
 		if (config.NginxReloadDisabled) && (config.Nginxplusapiaddr == "") {
 			return errors.New("nginx-plus api adress is mandatory when reloads are disabled. can't update upstreams")
+		}
+		if config.NginxIgnoreCheck {
+			logger.Warn("Nginx config check is disabled, this may lead to invalid configs being applied")
 		}
 	}
 

@@ -15,7 +15,7 @@ import (
 type ProxyManager interface {
 	GenerateStableBackendName(app App, groupName string) string
 	GenerateStableServerName(host Host) string
-	CheckConfig() error
+	CheckConfig(testConfigPath string) error
 	GetTempFilePattern() string
 	Reconcile(data *RenderingData) error
 	IsRuntimeAPIUpstreamUpdateEnabled() bool
@@ -29,12 +29,16 @@ type NginxProxyManager struct {
 	apiManager         *NginxAPIManager
 }
 
-func (pmgr *NginxProxyManager) CheckConfig() error {
+func (pmgr *NginxProxyManager) CheckConfig(testConfigPath string) error {
+	if pmgr.config.NginxIgnoreCheck {
+		logger.Warn("Skipping test of generated config as NginxIgnoreCheck is set to true")
+		return nil
+	}
 	// This is to allow arguments as well. Example "docker exec nginx..."
 	args := strings.Fields(ProgramCmd)
 	head := args[0]
 	args = args[1:]
-	args = append(args, ProgramCmdConfFileArg, ConfigPath, ProgramCmdConfTestArg)
+	args = append(args, ProgramCmdConfFileArg, testConfigPath, ProgramCmdConfTestArg)
 	return runCommand(head, args...)
 }
 
@@ -55,9 +59,6 @@ func (pmgr *NginxProxyManager) IsRuntimeAPIUpstreamUpdateEnabled() bool {
 }
 
 func (pmgr *NginxProxyManager) Reload() error {
-	if err := pmgr.CheckConfig(); err != nil {
-		return err
-	}
 	// This is to allow arguments as well. Example "docker exec nginx..."
 	args := strings.Fields(pmgr.config.NginxCmd)
 	head := args[0]
@@ -85,15 +86,16 @@ type HAProxyManager struct {
 	apiManager         *HaproxyManager
 }
 
-func (pmgr *HAProxyManager) CheckConfig() error {
+func (pmgr *HAProxyManager) CheckConfig(testConfigPath string) error {
 	if pmgr.config.HaproxyIgnoreCheck {
+		logger.Warn("Skipping test of generated config as HaproxyIgnoreCheck is set to true")
 		return nil
 	}
 	// This is to allow arguments as well. Example "docker exec nginx..."
 	args := strings.Fields(ProgramCmd)
 	head := args[0]
 	args = args[1:]
-	args = append(args, ProgramCmdConfFileArg, ConfigPath, ProgramCmdConfTestArg)
+	args = append(args, ProgramCmdConfFileArg, testConfigPath, ProgramCmdConfTestArg)
 	return runCommand(head, args...)
 }
 
@@ -117,9 +119,6 @@ func (pmgr *HAProxyManager) IsRuntimeAPIUpstreamUpdateEnabled() bool {
 }
 
 func (pmgr *HAProxyManager) Reload() error {
-	if err := pmgr.CheckConfig(); err != nil {
-		return err
-	}
 	// This is to allow arguments as well. Example "docker exec nginx..." or SIGUSR2 to master worker
 	args := strings.Fields(pmgr.config.HaproxyReloadCmd)
 	head := args[0]

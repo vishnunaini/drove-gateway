@@ -305,7 +305,7 @@ func writeConf(data *RenderingData) error {
 	}
 
 	parent := filepath.Dir(ConfigPath)
-	tmpFile, err := os.CreateTemp(parent, "."+data.ProxyPlatform+".conf.tmp-")
+	tmpFile, err := os.CreateTemp(parent, GlobalProxyManager.GetTempFilePattern())
 	if err != nil {
 		return err
 	}
@@ -319,7 +319,7 @@ func writeConf(data *RenderingData) error {
 		return err
 	}
 	config.LastUpdates.LastConfigRendered = time.Now()
-	err = checkConf(tmpFile.Name())
+	err = GlobalProxyManager.CheckConfig(tmpFile.Name())
 	if err != nil {
 		updateHealthSection("Config", false, err.Error())
 		logger.Error("Error in config generated")
@@ -422,13 +422,6 @@ func getTmpl(proxyTemplatePath string) (*template.Template, error) {
 		}
 	})
 	return tmplCache, tmplCacheErr
-}
-
-func checkConf(configPath string) error {
-	if IgnoreCheck {
-		return nil
-	}
-	return GlobalProxyManager.CheckConfig()
 }
 
 func reloadWorker() {
