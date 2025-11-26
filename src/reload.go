@@ -408,7 +408,6 @@ func nginxPlus(data *RenderingData) error {
 						}
 					}
 				}
-				cancel()
 				if err != nil {
 					logger.Error("unable to add initial server to new upstream: ", err)
 					reconciliationFailedApps[app.Vhost] = true
