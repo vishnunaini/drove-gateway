@@ -153,6 +153,8 @@ func setupGlobalProxyManager() ProxyManager {
 	var GlobalProxyManager ProxyManager
 	// Conditionally initialize runtime API manager at startup
 	if config.ProxyPlatform == "nginx" {
+		logger.Debug("Platform:" + config.ProxyPlatform)
+
 		if len(config.Nginxplusapiaddr) > 0 {
 			logger.Debug("Platform: " + config.ProxyPlatform + " API addr: " + config.Nginxplusapiaddr)
 			mgr, err := NewNginxAPIManager(
@@ -171,17 +173,17 @@ func setupGlobalProxyManager() ProxyManager {
 			logger.Info("Nginx http api client initialized at startup")
 		} else {
 			logger.Info("No runtime API based upstream updates enabled at startup as nginx api address is not configured")
-			logger.Debug("Platform:" + config.ProxyPlatform)
 			GlobalProxyManager = &NginxProxyManager{config: &config, apiManagerDisabled: true, apiManager: nil}
 			logger.Info("Nginx http api client not initialized at startup as nginx api address is not configured")
 		}
 
 	} else if config.ProxyPlatform == "haproxy" {
+		logger.Debug("Platform:" + config.ProxyPlatform)
 
 		if len(config.HaproxySocketAddr) > 0 {
-			logger.Debug("Platform: " + config.ProxyPlatform + " Socket addr: " + config.HaproxySocketAddr)
-			logger.Debug("Runtime API add server default-server attributes:" + config.HaproxyAddServerAttributesString)
-			logger.Debug("Runtime API add server ssl attributes:" + config.HaproxyAddServerSSLAttributesString)
+			logger.Debug("Platform: " + config.ProxyPlatform + " Socket addr: " + config.HaproxySocketAddr +
+				" Runtime API add server default-server attributes:" + config.HaproxyAddServerAttributesString +
+				" Runtime API add server ssl attributes:" + config.HaproxyAddServerSSLAttributesString)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.apiTimeout)*time.Second)
 			defer cancel()
 			mgr, err := NewHaproxyManager(ctx, config.HaproxySocketAddr, config.HaproxyDisableLargeBackendCountOptimisation, config.HaproxyAddServerAttributesString, config.HaproxyAddServerSSLAttributesString)
@@ -194,7 +196,6 @@ func setupGlobalProxyManager() ProxyManager {
 			logger.Info("Haproxy Runtime API client initialized at startup")
 		} else {
 			logger.Info("No runtime API based upstream updates enabled at startup as haproxy socket address is not configured")
-			logger.Debug("Platform:" + config.ProxyPlatform)
 			GlobalProxyManager = &HAProxyManager{config: &config, apiManagerDisabled: true, apiManager: nil}
 			logger.Info("Haproxy Runtime API client not initialized at startup as haproxy socket address is not configured")
 		}

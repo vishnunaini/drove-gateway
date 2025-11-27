@@ -58,7 +58,7 @@ func reload() error {
 
 		// Any use of runtime API is disabled, so we must perform a full reload.
 		// We still need to calculate backend names to update the database.
-		err = updateAndReloadConfig(&data, false)
+		err = updateAndReloadConfig(&data)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
@@ -91,7 +91,7 @@ func reload() error {
 					logger.Info("Routing tag changes detected, resulting in new backend names. Need to reload config")
 				}
 
-				err = updateAndReloadConfig(&data, false)
+				err = updateAndReloadConfig(&data)
 				if err != nil {
 					logger.WithFields(logrus.Fields{
 						"error": err.Error(),
@@ -151,7 +151,7 @@ func updateProxyConfig(data *RenderingData) error {
 	return nil
 }
 
-func updateAndReloadConfig(data *RenderingData, reloadDisabled bool) error {
+func updateAndReloadConfig(data *RenderingData) error {
 	logger.Debug("Updating config with reload")
 	start := time.Now()
 	vhosts := db.ReadAllKnownVhosts()
@@ -160,26 +160,22 @@ func updateAndReloadConfig(data *RenderingData, reloadDisabled bool) error {
 		return err
 	}
 
-	if !reloadDisabled {
-		err = GlobalProxyManager.Reload()
+	err = GlobalProxyManager.Reload()
 
-		if err != nil {
-			logger.WithFields(logrus.Fields{
-				"error": err.Error(),
-			}).Error("unable to reload " + data.ProxyPlatform)
-			go Metrics.CountFailedReloads.Inc()
-		} else {
-			elapsed := time.Since(start)
-			go Metrics.CountSuccessfulReloads.Inc()
-			go func() {
-				Metrics.HistogramReloadDuration.Observe(float64(elapsed) / float64(time.Second))
-			}()
-			config.LastUpdates.LastProxyProgramReload = time.Now()
-			db.UpdateLastKnownVhosts(vhosts)
-			db.UpdateLastKnownBackends(data.currentBackendNames)
-		}
-	} else if reloadDisabled {
-		logger.Info("Config reload has been disabled. Not reloading " + data.ProxyPlatform + " even after vhost/backend changes")
+	if err != nil {
+		logger.WithFields(logrus.Fields{
+			"error": err.Error(),
+		}).Error("unable to reload " + data.ProxyPlatform)
+		go Metrics.CountFailedReloads.Inc()
+	} else {
+		elapsed := time.Since(start)
+		go Metrics.CountSuccessfulReloads.Inc()
+		go func() {
+			Metrics.HistogramReloadDuration.Observe(float64(elapsed) / float64(time.Second))
+		}()
+		config.LastUpdates.LastProxyProgramReload = time.Now()
+		db.UpdateLastKnownVhosts(vhosts)
+		db.UpdateLastKnownBackends(data.currentBackendNames)
 	}
 	return nil
 }
