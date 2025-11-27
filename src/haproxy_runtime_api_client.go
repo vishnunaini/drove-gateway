@@ -277,13 +277,18 @@ func (manager *HaproxyManager) removeStaleServers(backend string, currentServers
 	for _, srv := range currentServers {
 		if _, exists := desiredServerMap[srv.Name]; !exists {
 			logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name}).Info("Disabling and deleting stale server")
+			if err := manager.client.SetServerState(backend, srv.Name, "drain"); err != nil {
+				Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_state_drain").Inc()
+				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to set server to drain")
+			}
+			time.Sleep(200 * time.Millisecond) // wait briefly to ensure HAProxy processes the state change
 			if err := manager.client.SetServerState(backend, srv.Name, "maint"); err != nil {
 				Metrics.HaproxyAPICallsFailed.WithLabelValues("set_server_state_maint").Inc()
 				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to disable server")
 				errs = append(errs, fmt.Sprintf("disable %s: %v", srv.Name, err))
 			} else {
 				Metrics.HaproxyAPICallsSuccessful.WithLabelValues("set_server_state_maint").Inc()
-				time.Sleep(10 * time.Millisecond) // wait briefly to ensure HAProxy processes the state change
+				time.Sleep(200 * time.Millisecond) // wait briefly to ensure HAProxy processes the state change
 			}
 			if srvr, err := manager.client.GetServerState(backend, srv.Name); err != nil {
 				errs = append(errs, fmt.Sprintf("refresh after disable %s: %v", srv.Name, err))
@@ -293,18 +298,18 @@ func (manager *HaproxyManager) removeStaleServers(backend string, currentServers
 					logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "OperationalState": srvr.OperationalState}).Info("Server not yet down state after disabling. Waiting to ensure in-flight connections are terminated.")
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()
-				waitGroup:
+				waitDownGroup:
 					for err != nil {
 						select {
 						case <-ctx.Done():
 							logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name}).Error("Context timeout waiting for server to exit 'stopping' state")
-							break waitGroup
+							break waitDownGroup
 						default:
-							time.Sleep(10 * time.Millisecond)
+							time.Sleep(100 * time.Millisecond)
 							srvr, err = manager.client.GetServerState(backend, srv.Name)
 							if err == nil {
 								if srvr.OperationalState == "down" {
-									break
+									break waitDownGroup
 								}
 							}
 						}
@@ -317,6 +322,27 @@ func (manager *HaproxyManager) removeStaleServers(backend string, currentServers
 			if err := manager.client.DeleteServer(backend, srv.Name); err != nil {
 				Metrics.HaproxyAPICallsFailed.WithLabelValues("delete_server").Inc()
 				logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name, "error": err}).Error("Failed to delete server")
+				time.Sleep(500 * time.Millisecond)
+				//even if server is down, deletion might fail for some time
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+			waitDelGroup:
+				for err != nil {
+					logger.Info("Retrying server deletion")
+					select {
+					case <-ctx.Done():
+						logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name}).Error("Context timeout waiting to retry server deletion")
+						break waitDelGroup
+					default:
+						time.Sleep(500 * time.Millisecond)
+						err = manager.client.DeleteServer(backend, srv.Name)
+						if err == nil {
+							logger.WithFields(logrus.Fields{"backend": backend, "server": srv.Name}).Info("Successfully deleted server after retry")
+							Metrics.HaproxyAPICallsSuccessful.WithLabelValues("delete_server").Inc()
+							break waitDelGroup
+						}
+					}
+				}
 				errs = append(errs, fmt.Sprintf("delete %s: %v", srv.Name, err))
 			} else {
 				Metrics.HaproxyAPICallsSuccessful.WithLabelValues("delete_server").Inc()
