@@ -380,8 +380,6 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 	}
 	health.NamespaceHealth[namespace] = nsHealth
 
-	Metrics.GaugeConfiguredEndpoints.WithLabelValues(namespace).Set(float64(configuredCount))
-	Metrics.GaugeHealthyEndpoints.WithLabelValues(namespace).Set(float64(healthyCount))
 }
 
 func endpointHealth(namespace string) {
