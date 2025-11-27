@@ -114,7 +114,6 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 		allServersState, err = manager.getServersStateWithBackend()
 		if err != nil {
 			resultLabel = "error"
-			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, err.Error())
 			logger.WithFields(logrus.Fields{
 				"error": err,
 			}).Error("Failed to get HAProxy servers state for all backends")
