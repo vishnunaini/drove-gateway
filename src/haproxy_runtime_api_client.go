@@ -360,7 +360,7 @@ func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerM
 	for serverName, host := range desiredServerMap {
 		if _, exists := currentServerMap[serverName]; !exists {
 			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Debug("Required server not found, adding new server")
-			if err := manager.addNewServer(backend, serverName, host); err != nil {
+			if err := manager.addNewServer(backend, serverName, host, currentServerMap[serverName]); err != nil {
 				errs = append(errs, fmt.Sprintf("add %s: %v", serverName, err))
 			}
 		} else {
@@ -379,7 +379,7 @@ func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerM
 // settings from default-server statement in config are not applied when adding server via runtime api
 // all default-server params should be added explictly here
 // only use IP while adding server, not fqdn. HAProxy resolves the hostname only at startup/reload and dynamic servers don't support fqdn resolution
-func (manager *HaproxyManager) addNewServer(backend, serverName string, host Host) error {
+func (manager *HaproxyManager) addNewServer(backend, serverName string, host Host, currentServer runtime_models.RuntimeServer) error {
 	logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Info("Adding fresh server")
 	// Ensure you resolve desired hostname to IP for HAProxy server addition. Done while building desiredServerMap
 	if host.PortType != "http" && host.PortType != "https" {
@@ -398,6 +398,11 @@ func (manager *HaproxyManager) addNewServer(backend, serverName string, host Hos
 	}
 
 	if err := manager.client.AddServer(backend, serverName, fmt.Sprintf("%s:%d %s", host.Host, host.Port, attributes_string)); err != nil {
+		srvr, runErr := manager.client.GetServerState(backend, serverName)
+		if runErr == nil {
+			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "srvr": srvr}).Info("Server already exists after failed add attempt. Proceeding to update existing server.")
+			return manager.updateExistingServer(backend, serverName, host, currentServer)
+		}
 		Metrics.HaproxyAPICallsFailed.WithLabelValues("add_server").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")
 		return err
