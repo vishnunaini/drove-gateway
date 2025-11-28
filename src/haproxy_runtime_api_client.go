@@ -139,6 +139,24 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 			}
 			logger.WithField("backend", backend).Debug("No existing servers found for backend in aggregated state. Trying to get state for the backend directly")
 			currentServersForBackend, backendErr = manager.client.GetServersState(backend)
+			if backendErr != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				logger.WithField("backend", backend).Debug("Retrying to get servers state for backend after brief wait. Some backends might take time to exist after a reload")
+			waitBackendGroup:
+				select {
+				case <-ctx.Done():
+					logger.WithFields(logrus.Fields{"backend": backend}).Error("Context timeout waiting to retry get servers state for backend")
+					break waitBackendGroup
+				case <-time.After(500 * time.Millisecond):
+					currentServersForBackend, backendErr = manager.client.GetServersState(backend)
+					if backendErr == nil {
+						break waitBackendGroup
+					} else {
+						logger.WithFields(logrus.Fields{"backend": backend, "error": backendErr}).Debug("Retry to get servers state for backend failed, will retry until timeout")
+					}
+				}
+			}
 		}
 
 		if err != nil {
