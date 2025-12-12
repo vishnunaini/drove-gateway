@@ -59,6 +59,7 @@ func reload() error {
 		// Any use of runtime API is disabled, so we must perform a full reload.
 		// We still need to calculate backend names to update the database.
 		err = updateAndReloadConfig(&data)
+		_ = db.UpdateReloadTimestamps(start)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
@@ -92,6 +93,7 @@ func reload() error {
 				}
 
 				err = updateAndReloadConfig(&data)
+				_ = db.UpdateReloadTimestamps(start)
 				if err != nil {
 					logger.WithFields(logrus.Fields{
 						"error": err.Error(),
@@ -105,6 +107,7 @@ func reload() error {
 		logger.Debug("Updating upstreams via " + data.ProxyPlatform + " api")
 		if GlobalProxyManager != nil {
 			err = GlobalProxyManager.Reconcile(&data)
+			_ = db.UpdateUpstreamAPIUpdateTimestamps(start)
 			if err != nil {
 				logger.WithFields(logrus.Fields{
 					"error": err.Error(),
@@ -120,7 +123,6 @@ func reload() error {
 		}
 	}
 	elapsed := time.Since(start)
-	_ = db.UpdateReloadTimestamps(start, elapsed)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
