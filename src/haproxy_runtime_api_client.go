@@ -414,6 +414,30 @@ func (manager *HaproxyManager) addNewServer(backend, serverName string, host Hos
 		logger.WithFields(logrus.Fields{"attributes": attributes_string, "backend": backend, "server": serverName}).Info("Adding SSL attributes to server")
 
 	}
+	//check if backend exists. sometimes backends take time to appear after reload
+	_, err := manager.client.GetServersState(backend)
+	if err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		logger.WithField("backend", backend).Debug("Retrying to get servers state for backend after brief wait. Some backends might take time to exist after a reload")
+	waitBackendGroup:
+		select {
+		case <-ctx.Done():
+			logger.WithFields(logrus.Fields{"backend": backend}).Error("Context timeout waiting to retry get servers state for backend before adding server")
+			break waitBackendGroup
+		case <-time.After(500 * time.Millisecond):
+			_, err = manager.client.GetServersState(backend)
+			if err == nil {
+				break waitBackendGroup
+			} else {
+				logger.WithFields(logrus.Fields{"backend": backend, "error": err}).Debug("Retry to get servers state for backend failed, will retry until timeout")
+			}
+		}
+	}
+	if err != nil {
+		Metrics.HaproxyAPICallsFailed.WithLabelValues("get_servers_state_before_add").Inc()
+		return fmt.Errorf("failed to get servers state for backend %s before adding server %s: %w", backend, serverName, err)
+	}
 
 	if err := manager.client.AddServer(backend, serverName, fmt.Sprintf("%s:%d %s", host.Host, host.Port, attributes_string)); err != nil {
 		srvr, runErr := manager.client.GetServerState(backend, serverName)
