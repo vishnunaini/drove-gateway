@@ -178,6 +178,8 @@ func updateAndReloadConfig(data *RenderingData) error {
 		config.LastUpdates.LastProxyProgramReload = time.Now()
 		db.UpdateLastKnownVhosts(vhosts)
 		db.UpdateLastKnownBackends(data.currentBackendNames)
+		//sleep some time for the reload to stabilize
+		time.Sleep(500 * time.Millisecond)
 	}
 	return nil
 }
