@@ -438,6 +438,7 @@ func (manager *HaproxyManager) addNewServer(backend, serverName string, host Hos
 					break waitAddGroup
 				} else if runErr == nil {
 					logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "srvr": srvr}).Info("Server added successfully after retry")
+					err = nil
 					break waitAddGroup
 				} else {
 					logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Warn("Retry to add server failed, will retry until timeout")
