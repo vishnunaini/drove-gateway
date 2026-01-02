@@ -324,7 +324,7 @@ func setupDefaultConfig() {
 		ProgramCmd = config.HaproxyCmd
 		ConfigReloadDisabled = config.HaproxyReloadDisabled
 		if ConfigReloadDisabled {
-			logger.Warning("Haproxy reloads are DISABLED. Unlike in nginx, This is NOT a recommended configuration as haproxy is dependent on config to maintain state across restarts. haproxy's reload from global state file feature should be used and restarts accordingly handled\n")
+			logger.Warn("Haproxy reloads are DISABLED. Unlike in nginx, This is NOT a recommended configuration as haproxy is dependent on config to maintain state across restarts. haproxy's reload from global state file feature should be used and restarts accordingly handled\n")
 		}
 		ProgramCmdConfFileArg = "-f"
 		ProgramCmdConfTestArg = "-c"
