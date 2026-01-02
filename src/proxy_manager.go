@@ -150,7 +150,7 @@ func (pmgr *HAProxyManager) GenerateStableServerName(host Host) string {
 }
 
 func setupGlobalProxyManager() ProxyManager {
-	var GlobalProxyManager ProxyManager
+	var pm ProxyManager
 	// Conditionally initialize runtime API manager at startup
 	if config.ProxyPlatform == "nginx" {
 		logger.Debug("Platform:" + config.ProxyPlatform)
@@ -169,11 +169,11 @@ func setupGlobalProxyManager() ProxyManager {
 					"error": err.Error(),
 				}).Fatal("unable to create nginx api manager at startup; exiting nixy")
 			}
-			GlobalProxyManager = &NginxProxyManager{config: &config, apiManagerDisabled: false, apiManager: mgr}
+			pm = &NginxProxyManager{config: &config, apiManagerDisabled: false, apiManager: mgr}
 			logger.Info("Nginx http api client initialized at startup")
 		} else {
 			logger.Info("No runtime API based upstream updates enabled at startup as nginx api address is not configured")
-			GlobalProxyManager = &NginxProxyManager{config: &config, apiManagerDisabled: true, apiManager: nil}
+			pm = &NginxProxyManager{config: &config, apiManagerDisabled: true, apiManager: nil}
 			logger.Info("Nginx http api client not initialized at startup as nginx api address is not configured")
 		}
 
@@ -192,18 +192,18 @@ func setupGlobalProxyManager() ProxyManager {
 					"error": err.Error(),
 				}).Fatal("unable to create haproxy manager at startup; exiting nixy")
 			}
-			GlobalProxyManager = &HAProxyManager{config: &config, apiManagerDisabled: false, apiManager: mgr}
+			pm = &HAProxyManager{config: &config, apiManagerDisabled: false, apiManager: mgr}
 			logger.Info("Haproxy Runtime API client initialized at startup")
 		} else {
 			logger.Info("No runtime API based upstream updates enabled at startup as haproxy socket address is not configured")
-			GlobalProxyManager = &HAProxyManager{config: &config, apiManagerDisabled: true, apiManager: nil}
+			pm = &HAProxyManager{config: &config, apiManagerDisabled: true, apiManager: nil}
 			logger.Info("Haproxy Runtime API client not initialized at startup as haproxy socket address is not configured")
 		}
 	} else {
 		logger.WithFields(logrus.Fields{"platform": config.ProxyPlatform, config.Nginxplusapiaddr: config.Nginxplusapiaddr, config.HaproxySocketAddr: config.HaproxySocketAddr}).Fatal("Invalid configuration. Exiting nixy")
 		return nil
 	}
-	return GlobalProxyManager
+	return pm
 }
 
 // runCommand executes a command and returns a formatted error if it fails.
