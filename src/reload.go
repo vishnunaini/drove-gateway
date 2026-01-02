@@ -70,7 +70,7 @@ func reload() error {
 	} else {
 		logger.Debug("Runtime API calls to update upstreams are enabled")
 		//Use of runtime API is enabled
-		//For HAProxy, config is generated but not loaded even when reload is disabled as there is no other way to persist state across reloads
+		//For HAProxy, if config reload is disabled, only use API to update backends. it is responsibility fo config to maintain state across restarts e.g. with global-server-state-file. TO-DO: possible to update config only
 		//For Nginx+, ngx http_api maintains it's own state files if referenced in the running nginx config. Hence no templating is done at all when reload is disabled
 		if ConfigReloadDisabled {
 			logger.Warn(data.ProxyPlatform + ":  reload has been disabled")

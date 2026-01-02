@@ -360,7 +360,7 @@ func validateConfig() error {
 
 	if config.ProxyPlatform == "haproxy" {
 		if (config.HaproxyReloadDisabled) && (config.HaproxySocketAddr == "") {
-			return errors.New("haproxy socket adress is mandatory when reloads are disabled, can't update runtime servers")
+			return errors.New("haproxy socket address is mandatory when reloads are disabled, can't update runtime servers")
 		}
 		if config.HaproxyIgnoreCheck {
 			logger.Warn("Haproxy config check is disabled, this may lead to invalid configs being applied")
@@ -369,7 +369,7 @@ func validateConfig() error {
 
 	if config.ProxyPlatform == "nginx" {
 		if (config.NginxReloadDisabled) && (config.Nginxplusapiaddr == "") {
-			return errors.New("nginx-plus api adress is mandatory when reloads are disabled. can't update upstreams")
+			return errors.New("nginx-plus api address is mandatory when reloads are disabled. can't update upstreams")
 		}
 		if config.NginxIgnoreCheck {
 			logger.Warn("Nginx config check is disabled, this may lead to invalid configs being applied")
