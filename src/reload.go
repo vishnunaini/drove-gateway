@@ -1,40 +1,48 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io/ioutil"
 	"net"
-	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
-	nplus "github.com/nginxinc/nginx-plus-go-client/client"
 	"github.com/sirupsen/logrus"
 )
 
 type NamespaceRenderingData struct {
 	LeaderVHost string
 	Leader      LeaderController
+	RoutingTag  string `json:"-"`
 }
 
 type RenderingData struct {
-	Xproxy              string
-	LeftDelimiter       string                            `json:"-" toml:"left_delimiter"`
-	RightDelimiter      string                            `json:"-" toml:"right_delimiter"`
-	MaxFailsUpstream    *int                              `json:"max_fails,omitempty"`
-	FailTimeoutUpstream string                            `json:"fail_timeout,omitempty"`
-	SlowStartUpstream   string                            `json:"slow_start,omitempty"`
-	Namespaces          map[string]NamespaceRenderingData `json:"namespaces"`
-	Apps                map[string]App
+	Xproxy                                string
+	ProxyPlatform                         string                            `json:"-"`
+	LeftDelimiter                         string                            `json:"-" toml:"left_delimiter"`
+	RightDelimiter                        string                            `json:"-" toml:"right_delimiter"`
+	NginxMaxFailsUpstream                 int                               `json:"-" toml:"max_fails"`
+	NginxFailTimeoutUpstream              string                            `json:"-" toml:"nginx_fail_timeout"`
+	NginxSlowStartUpstream                string                            `json:"-" toml:"nginx_slow_start"`
+	HaproxyAddServerAttributesString      string                            `json:"-" toml:"haproxy_add_server_attributes_string"`
+	HaproxyAddServerSSLAttributesString   string                            `json:"-" toml:"haproxy_add_server_ssl_attributes_string"`
+	HaproxyServerNamePrefix               string                            `json:"-" toml:"haproxy_server_name_prefix"`
+	HaproxyServerNameHostPortSeparator    string                            `json:"-" toml:"haproxy_server_name_host_port_delimiter"`
+	HaproxyBackendNameSeparator           string                            `json:"-" toml:"haproxy_backend_name_separator"`
+	HaproxyBackendIncludeRoutingTagSuffix bool                              `json:"-" toml:"haproxy_backend_include_routing_tag_suffix"`
+	Namespaces                            map[string]NamespaceRenderingData `json:"namespaces"`
+	Apps                                  map[string]App
+	currentBackendNames                   map[string]bool `json:"-"`
 }
+
+var tmplCache *template.Template
+var tmplCacheErr error
+var tmplCacheOnce sync.Once
 
 func reload() error {
 	start := time.Now()
@@ -42,87 +50,136 @@ func reload() error {
 	data := RenderingData{}
 	createRenderingData(&data)
 	config.LastUpdates.LastSync = time.Now()
-	if len(config.Nginxplusapiaddr) == 0 || config.Nginxplusapiaddr == "" {
-		//Nginx plus is disabled
+
+	if !GlobalProxyManager.IsRuntimeAPIUpstreamUpdateEnabled() {
+		logger.Debug("Runtime API calls to update upstreams are disabled")
+
+		GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK: Not in use, full reloads are enabled")
+
+		// Any use of runtime API is disabled, so we must perform a full reload.
+		// We still need to calculate backend names to update the database.
 		err = updateAndReloadConfig(&data)
+		_ = db.UpdateReloadTimestamps(start)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
-			}).Error("unable to reload nginx config")
-			go statsCount("reload.failed", 1)
-			go countFailedReloads.Inc()
+			}).Error("unable to reload " + data.ProxyPlatform + " config")
+			go Metrics.CountFailedReloads.Inc()
 			return err
 		}
 	} else {
-		//Nginx plus is enabled
-		if config.NginxReloadDisabled {
-			logger.Debug("Template reload has been disabled")
+		logger.Debug("Runtime API calls to update upstreams are enabled")
+		//Use of runtime API is enabled
+		//For HAProxy, if config reload is disabled, only use API to update backends. it is responsibility fo config to maintain state across restarts e.g. with global-server-state-file. TO-DO: possible to update config only
+		//For Nginx+, ngx http_api maintains it's own state files if referenced in the running nginx config. Hence no templating is done at all when reload is disabled
+		if ConfigReloadDisabled {
+			logger.Warn(data.ProxyPlatform + ":  reload has been disabled")
 		} else {
 			vhosts := db.ReadAllKnownVhosts()
 			lastKnownVhosts := db.ReadLastKnownVhosts()
-			if !reflect.DeepEqual(vhosts, lastKnownVhosts) {
-				logger.Info("Vhost changes detected. Need to reload config")
+
+			// Generate a set of current backend names to detect changes.
+			currentBackendNames := data.currentBackendNames
+			lastKnownBackendNames := db.ReadLastKnownBackends()
+
+			// A reload is needed if vhosts have changed OR if the set of backend names has changed.
+			// A change in backend names implies a new routingTagValue has been introduced,
+			// requiring a new backend block in the config.
+			if !reflect.DeepEqual(vhosts, lastKnownVhosts) || !reflect.DeepEqual(currentBackendNames, lastKnownBackendNames) {
+				if !reflect.DeepEqual(vhosts, lastKnownVhosts) {
+					logger.Info("Vhost changes detected. Need to reload config")
+				} else {
+					logger.Info("Routing tag changes detected, resulting in new backend names. Need to reload config")
+				}
+
 				err = updateAndReloadConfig(&data)
+				_ = db.UpdateReloadTimestamps(start)
 				if err != nil {
 					logger.WithFields(logrus.Fields{
 						"error": err.Error(),
-					}).Error("unable to update and reload nginx config. NPlus api calls will be skipped.")
+					}).Error("unable to update and reload " + data.ProxyPlatform + " config. Runtime api calls to update upstreams will be skipped.")
 					return err
 				}
 			} else {
-				logger.Debug("No changes detected in vhosts. No config update is necessary. Upstream updates will happen via nplus apis")
+				logger.Debug("No changes detected in vhosts or backend names. No config update is necessary. Upstream updates will happen via " + config.ProxyPlatform + " apis")
 			}
 		}
-		err = nginxPlus(&data)
+		logger.Debug("Updating upstreams via " + data.ProxyPlatform + " api")
+		if GlobalProxyManager != nil {
+			err = GlobalProxyManager.Reconcile(&data)
+			_ = db.UpdateUpstreamAPIUpdateTimestamps(start)
+			if err != nil {
+				logger.WithFields(logrus.Fields{
+					"error": err.Error(),
+				}).Error("unable to update upstreams via proxy manager api")
+				GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, err.Error())
+				logger.WithFields(logrus.Fields{
+					"error": err.Error(),
+				}).Error("unable to update upstreams via " + data.ProxyPlatform + " api")
+				go Metrics.CountFailedReloads.Inc()
+			} else {
+				GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK")
+			}
+		}
 	}
+	elapsed := time.Since(start)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
-		}).Error("unable to generate nginx config")
-		go statsCount("reload.failed", 1)
-		go countFailedReloads.Inc()
+		}).Error("unable to complete reload/reconciliation")
+		go Metrics.CountFailedReloads.Inc()
 		return err
 	}
-	elapsed := time.Since(start)
 	logger.WithFields(logrus.Fields{
 		"took": elapsed,
 	}).Debug("reload worker completed")
+
 	return nil
 
 }
 
-func updateAndReloadConfig(data *RenderingData) error {
-	start := time.Now()
+func updateProxyConfig(data *RenderingData) error {
+	logger.Debug("Updating " + data.ProxyPlatform + " config")
 	config.LastUpdates.LastSync = time.Now()
-	vhosts := db.ReadAllKnownVhosts()
 	err := writeConf(data)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
-		}).Error("unable to generate nginx config")
-		go statsCount("reload.failed", 1)
-		go countFailedReloads.Inc()
+		}).Error("unable to write " + data.ProxyPlatform + " config")
+		go Metrics.CountFailedReloads.Inc()
 		return err
 	}
 	config.LastUpdates.LastConfigValid = time.Now()
-	err = reloadNginx()
+	return nil
+}
+
+func updateAndReloadConfig(data *RenderingData) error {
+	logger.Debug("Updating config with reload")
+	start := time.Now()
+	vhosts := db.ReadAllKnownVhosts()
+	err := updateProxyConfig(data)
+	if err != nil {
+		return err
+	}
+
+	err = GlobalProxyManager.Reload()
+
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
-		}).Error("unable to reload nginx")
-		go statsCount("reload.failed", 1)
-		go countFailedReloads.Inc()
+		}).Error("unable to reload " + data.ProxyPlatform)
+		go Metrics.CountFailedReloads.Inc()
 	} else {
 		elapsed := time.Since(start)
-		logger.WithFields(logrus.Fields{
-			"took": elapsed,
-		}).Debug("config updated and reloaded successfully")
-		go statsCount("reload.success", 1)
-		go statsTiming("reload.time", elapsed)
-		go countSuccessfulReloads.Inc()
-		go observeReloadTimeMetric(elapsed)
-		config.LastUpdates.LastNginxReload = time.Now()
+		go Metrics.CountSuccessfulReloads.Inc()
+		go func() {
+			Metrics.HistogramReloadDuration.Observe(float64(elapsed) / float64(time.Second))
+		}()
+		config.LastUpdates.LastProxyProgramReload = time.Now()
 		db.UpdateLastKnownVhosts(vhosts)
+		db.UpdateLastKnownBackends(data.currentBackendNames)
+		//sleep some time for the reload to stabilize
+		time.Sleep(500 * time.Millisecond)
 	}
 	return nil
 }
@@ -132,12 +189,20 @@ func createRenderingData(data *RenderingData) {
 	staticData := db.ReadStaticData()
 
 	data.Xproxy = staticData.Xproxy
+	data.ProxyPlatform = config.ProxyPlatform
 	data.LeftDelimiter = staticData.LeftDelimiter
 	data.RightDelimiter = staticData.RightDelimiter
-	data.FailTimeoutUpstream = staticData.FailTimeoutUpstream
-	data.MaxFailsUpstream = staticData.MaxFailsUpstream
-	data.SlowStartUpstream = staticData.SlowStartUpstream
+	data.NginxFailTimeoutUpstream = staticData.NginxFailTimeoutUpstream
+	data.NginxMaxFailsUpstream = staticData.NginxMaxFailsUpstream
+	data.NginxSlowStartUpstream = staticData.NginxSlowStartUpstream
+	data.HaproxyAddServerAttributesString = staticData.HaproxyAddServerAttributesString
+	data.HaproxyAddServerSSLAttributesString = staticData.HaproxyAddServerSSLAttributesString
+	data.HaproxyServerNamePrefix = staticData.HaproxyServerNamePrefix
+	data.HaproxyServerNameHostPortSeparator = staticData.HaproxyServerNameHostPortSeparator
+	data.HaproxyBackendNameSeparator = staticData.HaproxyBackendNameSeparator
+	data.HaproxyBackendIncludeRoutingTagSuffix = staticData.HaproxyBackendIncludeRoutingTagSuffix
 	data.Namespaces = make(map[string]NamespaceRenderingData)
+	data.currentBackendNames = make(map[string]bool)
 
 	allApps := make(map[string]App)
 
@@ -145,9 +210,12 @@ func createRenderingData(data *RenderingData) {
 		data.Namespaces[name] = NamespaceRenderingData{
 			LeaderVHost: nmData.Drove.LeaderVHost,
 			Leader:      nmData.Leader,
+			RoutingTag:  nmData.Drove.RoutingTag,
 		}
+
 		//Merging App if already exists
 		for appId, appData := range nmData.Apps {
+			appData.RoutingTagKey = nmData.Drove.RoutingTag
 			if existingAppData, ok := allApps[appId]; ok {
 				//Appending hosts
 				existingAppData.Hosts = append(existingAppData.Hosts, appData.Hosts...)
@@ -194,270 +262,166 @@ func createRenderingData(data *RenderingData) {
 			}
 		}
 	}
+
 	data.Apps = allApps
+
+	for _, app := range data.Apps {
+		if app.Vhost != "" {
+			for groupName, groupData := range app.Groups {
+				logrus.Debug("Group: " + groupName + " Data: " + fmt.Sprintf("%+v", groupData))
+				backendName := GlobalProxyManager.GenerateStableBackendName(app, groupName)
+				if backendName != "" {
+					data.currentBackendNames[backendName] = true
+				}
+			}
+		}
+	}
+
 	logger.WithFields(logrus.Fields{
 		"data": data,
-	}).Debug("Rendering data generated")
+	}).Trace("Rendering data generated")
 	return
+}
+
+func renderConfigFromTemplate(tmpl *template.Template, data *RenderingData, file *os.File) error {
+	start := time.Now()
+	err := tmpl.Execute(file, data)
+	duration := time.Since(start)
+	resultLabel := "success"
+	Metrics.TemplateRenderDuration.WithLabelValues(resultLabel).Observe(float64(duration) / float64(time.Second))
+	if err != nil {
+		resultLabel = "error"
+	}
+	return err
 }
 
 func writeConf(data *RenderingData) error {
 	config.RLock()
 	defer config.RUnlock()
 
-	template, err := getTmpl()
+	template, err := getTmpl(templatePath)
 	if err != nil {
 		return err
 	}
 
-	parent := filepath.Dir(config.NginxConfig)
-	tmpFile, err := ioutil.TempFile(parent, ".nginx.conf.tmp-")
+	parent := filepath.Dir(ConfigPath)
+	tmpFile, err := os.CreateTemp(parent, GlobalProxyManager.GetTempFilePattern())
 	if err != nil {
 		return err
 	}
 	defer tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
 	lastConfig = tmpFile.Name()
-	err = template.Execute(tmpFile, &data)
+
+	err = renderConfigFromTemplate(template, data, tmpFile)
 	if err != nil {
+		updateHealthSection("Config", false, err.Error())
 		return err
 	}
 	config.LastUpdates.LastConfigRendered = time.Now()
-	err = checkConf(tmpFile.Name())
+	err = GlobalProxyManager.CheckConfig(tmpFile.Name())
 	if err != nil {
+		updateHealthSection("Config", false, err.Error())
 		logger.Error("Error in config generated")
+	} else {
+		updateHealthSection("Config", true, "OK")
+	}
+	if err != nil {
 		return err
 	}
+
 	logger.WithFields(logrus.Fields{
-		"file": config.NginxConfig,
+		"file": ConfigPath,
 	}).Info("Writing new config")
-	err = os.Rename(tmpFile.Name(), config.NginxConfig)
+	err = os.Rename(tmpFile.Name(), ConfigPath)
 	if err != nil {
 		return err
 	}
-	lastConfig = config.NginxConfig
+	lastConfig = ConfigPath
 	return nil
 }
 
-func nginxPlus(data *RenderingData) error {
-	//Current implementation only updates AppVhosts, does not suppport routing tag & LeaderVhost
-	config.RLock()
-	defer config.RUnlock()
-
-	logger.WithFields(logrus.Fields{
-		"nginx": config.Nginxplusapiaddr,
-	}).Debug("endpoint")
-
-	endpoint := "http://" + config.Nginxplusapiaddr + "/api"
-	//Create transport here for connection re-use
-	tr := &http.Transport{
-		MaxIdleConns:       30,
-		DisableCompression: true,
+func IsUnixSocketAddr(addr string) bool {
+	if strings.HasPrefix(addr, "ipv4@") || strings.HasPrefix(addr, "ipv6@") {
+		return false
 	}
+	if strings.Contains(addr, ":") {
+		return false
+	}
+	return true
+}
 
-	client := &http.Client{Transport: tr}
-	nginxClient, error := nplus.NewNginxClient(endpoint, nplus.WithHTTPClient(client), nplus.WithAPIVersion(
-		8))
-	if error != nil {
+func isHTTPHostGroup(hosts []Host) bool {
+	for _, host := range hosts {
+		if host.PortType != "http" && host.PortType != "https" {
+			return false
+		}
+	}
+	return true
+}
+
+func resolveWithIPFallback(hostname string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.DnsResolutionTimeoutSec)*time.Second)
+	defer cancel()
+	ip, err := resolveHostnameToIP(ctx, hostname)
+	if err != nil {
 		logger.WithFields(logrus.Fields{
-			"error": error,
-		}).Error("unable to make call to nginx plus")
-		return error
+			"hostname": hostname,
+			"error":    err,
+		}).Warning("DNS resolution failed, falling back to hostname")
+		updateHealthSection("ResolverHealth", false, fmt.Sprintf("DNS resolution failed for %s: %v", hostname, err))
+		return hostname, err
 	}
+	updateHealthSection("ResolverHealth", true, "OK")
+	return ip, nil
+}
 
-	logger.WithFields(logrus.Fields{"apps": data.Apps}).Debug("Updating upstreams for the whitelisted http/s drove vhosts")
-	for _, app := range data.Apps {
-		//Ensure UpdateHTTPServers is not called for streams TCP/UDP instances
-		isHTTPVHost := false
-		for _, t := range app.Hosts {
-			if (string(t.PortType) == "http") || (string(t.PortType) == "https") {
-				isHTTPVHost = true
-			}
+func resolveHostnameToIP(ctx context.Context, hostname string) (string, error) {
+	resolver := net.Resolver{}
+	ips, err := resolver.LookupHost(ctx, hostname)
+	if err != nil {
+		return "", err
+	}
+	if len(ips) == 0 {
+		return "", fmt.Errorf("no IP addresses found for hostname: %s", hostname)
+	}
+	return ips[0], nil
+}
 
-		}
-
-		if isHTTPVHost {
-			var newFormattedServers []string
-			for _, t := range app.Hosts {
-				if (string(t.PortType) == "http") || (string(t.PortType) == "https") {
-					var hostAndPortMapping string
-					ipRecords, error := net.LookupHost(string(t.Host))
-					if error != nil {
-						logger.WithFields(logrus.Fields{
-							"error":    error,
-							"hostname": t.Host,
-						}).Error("dns lookup failed !! skipping the hostname")
-						continue
-					}
-					ipRecord := ipRecords[0]
-					hostAndPortMapping = ipRecord + ":" + fmt.Sprint(t.Port)
-					newFormattedServers = append(newFormattedServers, hostAndPortMapping)
-				}
-
-			}
-
+func getTmpl(proxyTemplatePath string) (*template.Template, error) {
+	tmplCacheOnce.Do(func() {
+		logger.WithFields(logrus.Fields{
+			"file": proxyTemplatePath,
+		}).Info("Reading template")
+		tmplCache, tmplCacheErr = template.New(filepath.Base(proxyTemplatePath)).
+			Delims(config.LeftDelimiter, config.RightDelimiter).
+			Funcs(template.FuncMap{
+				"hasPrefix": strings.HasPrefix,
+				"hasSuffix": strings.HasSuffix,
+				"contains":  strings.Contains,
+				"split":     strings.Split,
+				"join":      strings.Join,
+				"trim":      strings.Trim,
+				"replace":   strings.Replace,
+				"tolower":   strings.ToLower,
+				"getenv":    os.Getenv,
+				"datetime":  time.Now,
+			}).
+			ParseFiles(proxyTemplatePath)
+		if tmplCacheErr != nil {
 			logger.WithFields(logrus.Fields{
-				"vhost": app.Vhost,
-			}).Debug("app.vhost")
-
-			logger.WithFields(logrus.Fields{
-				"upstreams": newFormattedServers,
-			}).Debug("nginx upstreams")
-
-			upstreamtocheck := app.Vhost
-			var finalformattedServers []nplus.UpstreamServer
-
-			for _, server := range newFormattedServers {
-				formattedServer := nplus.UpstreamServer{Server: server, MaxFails: config.MaxFailsUpstream, FailTimeout: config.FailTimeoutUpstream, SlowStart: config.SlowStartUpstream}
-				finalformattedServers = append(finalformattedServers, formattedServer)
-			}
-			// If upstream has no servers, UpdateHTTPServers returns error as in-line GetHTTPServers returns error. server ID 0 needs to be explicitly initiated by a PATCH
-			err := nginxClient.CheckIfUpstreamExists(upstreamtocheck)
-			if err != nil {
-				// First add atleast one server to initialise upstream to support UpdateHTTPServers
-				logger.WithFields(logrus.Fields{
-					"Adding fresh upstream for": upstreamtocheck,
-				}).Info("Adding first server for upstream")
-				//Adding first server for server ID 0. ID 0 needs to be updated if state file is resurrected when a vhost gets resurrected. Create ID 0 otherwise.
-				error := nginxClient.UpdateHTTPServer(upstreamtocheck, finalformattedServers[0])
-
-				// Now upstream should have servers, update earlier state to let UpdateHTTPServers take over
-				//But wait from some time for nginx to actually update it's state. Consecutive calls would still return a 404 if you don't wait long enough
-				if error != nil {
-					ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-					defer cancel()
-					err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
-					for err != nil {
-						select {
-						case <-ctx.Done():
-							logger.WithFields(logrus.Fields{
-								"Adding fresh upstream for": upstreamtocheck,
-							}).Error("Context timeout waiting for CheckIfUpstreamExists")
-						default:
-							time.Sleep(5 * time.Millisecond)
-							err = nginxClient.CheckIfUpstreamExists(upstreamtocheck)
-						}
-					}
-					cancel()
-				}
-
-			}
-			if err == nil {
-				added, deleted, updated, error := nginxClient.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
-
-				if added != nil {
-					logger.WithFields(logrus.Fields{
-						"vhost":           upstreamtocheck,
-						"upstreams added": added,
-					}).Info("nginx upstreams added")
-				}
-				if deleted != nil {
-					logger.WithFields(logrus.Fields{
-						"vhost":             upstreamtocheck,
-						"upstreams deleted": deleted,
-					}).Info("nginx upstreams deleted")
-				}
-				if updated != nil {
-					logger.WithFields(logrus.Fields{
-						"vhost":             upstreamtocheck,
-						"upstreams updated": updated,
-					}).Info("nginx upstreams updated")
-				}
-				if error != nil {
-					logger.WithFields(logrus.Fields{
-						"vhost": upstreamtocheck,
-						"error": error,
-					}).Error("unable to update nginx upstreams")
-					return error
-				}
-			} else {
-				return err
-			}
+				"error": tmplCacheErr,
+				"file":  proxyTemplatePath,
+			}).Error("unable to read template")
+			updateHealthSection("Template", false, tmplCacheErr.Error())
 		} else {
-			logger.WithFields(logrus.Fields{"vhost": app.Vhost}).Debug("Skipping non-HTTP/S vhost update")
+			logger.WithFields(logrus.Fields{
+				"file": proxyTemplatePath,
+			}).Info("Template read successfully")
+			updateHealthSection("Template", true, "OK")
 		}
-	}
-	return nil
-
-}
-
-func checkTmpl() error {
-	config.RLock()
-	defer config.RUnlock()
-	t, err := getTmpl()
-	if err != nil {
-		return err
-	}
-	data := RenderingData{}
-	createRenderingData(&data)
-	err = t.Execute(ioutil.Discard, &data)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func getTmpl() (*template.Template, error) {
-	logger.WithFields(logrus.Fields{
-		"file": config.NginxTemplate,
-	}).Info("Reading template")
-	return template.New(filepath.Base(config.NginxTemplate)).
-		Delims(config.LeftDelimiter, config.RightDelimiter).
-		Funcs(template.FuncMap{
-			"hasPrefix": strings.HasPrefix,
-			"hasSuffix": strings.HasPrefix,
-			"contains":  strings.Contains,
-			"split":     strings.Split,
-			"join":      strings.Join,
-			"trim":      strings.Trim,
-			"replace":   strings.Replace,
-			"tolower":   strings.ToLower,
-			"getenv":    os.Getenv,
-			"datetime":  time.Now}).
-		ParseFiles(config.NginxTemplate)
-}
-
-func checkConf(path string) error {
-	// Always return OK if disabled in config.
-	if config.NginxIgnoreCheck {
-		return nil
-	}
-	// This is to allow arguments as well. Example "docker exec nginx..."
-	args := strings.Fields(config.NginxCmd)
-	head := args[0]
-	args = args[1:]
-	args = append(args, "-c")
-	args = append(args, path)
-	args = append(args, "-t")
-	cmd := exec.Command(head, args...)
-	//cmd := exec.Command(parts..., "-c", path, "-t")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run() // will wait for command to return
-	if err != nil {
-		msg := fmt.Sprint(err) + ": " + stderr.String()
-		errstd := errors.New(msg)
-		return errstd
-	}
-	return nil
-}
-
-func reloadNginx() error {
-	// This is to allow arguments as well. Example "docker exec nginx..."
-	args := strings.Fields(config.NginxCmd)
-	head := args[0]
-	args = args[1:]
-	args = append(args, "-s")
-	args = append(args, "reload")
-	cmd := exec.Command(head, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run() // will wait for command to return
-	if err != nil {
-		msg := fmt.Sprint(err) + ": " + stderr.String()
-		errstd := errors.New(msg)
-		return errstd
-	}
-	return nil
+	})
+	return tmplCache, tmplCacheErr
 }
 
 func reloadWorker() {

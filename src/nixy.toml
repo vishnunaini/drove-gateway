@@ -23,11 +23,24 @@ failtimeoutupstream = "1s"
 slowstartupstream = "0s"
 event_refresh_interval_sec = 5
 
-# Statsd settings
-#[statsd]
-#addr = "10.57.8.171:8125" # optional for statistics
-#namespace = "nixy.my_mesos_cluster"
-#sample_rate = 100
+#Haproxy
+#HAProxy
+#proxy_platform="haproxy"
+#haproxysocketaddr = "/run/haproxy/admin.sock"
+##haproxy_reload_disabled = false
+#haproxy_config = "/etc/haproxy/haproxy.cfg"
+#haproxy_template = "/etc/haproxy/haproxy.tmpl"
+#haproxy_reload_cmd = "systemctl reload haproxy"
+#haproxy_cmd = "haproxy"
+#haproxy_ignore_check = false
+#haproxy_server_name_prefix = "server"
+#haproxy_server_name_host_port_delimiter = "_"
+#haproxy_backend_name_separator = "_"
+#haproxy_backend_include_routing_tag_suffix = true
+#haproxy_add_server_attributes_string = "on-marked-down shutdown-sessions"
+#^stuff like disabling h2 can be done here by adding alpn http/1.1 . Some functionality like no-check, init-addr are not supported for dynamic servers
+#force shutdown-sessions to don't let sessions live for long
+#haproxy_add_server_ssl_attributes_string = "ssl verify required ca-file ca-certificates.crt" #defaults to ssl verify none
 
 
 # Drove API

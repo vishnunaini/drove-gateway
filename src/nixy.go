@@ -6,10 +6,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sync"
 	"time"
 
@@ -34,11 +33,12 @@ type HostGroup struct {
 
 // App struct
 type App struct {
-	ID     string
-	Vhost  string
-	Hosts  []Host
-	Tags   map[string]string
-	Groups map[string]HostGroup
+	ID            string
+	Vhost         string
+	Hosts         []Host
+	Tags          map[string]string
+	Groups        map[string]HostGroup
+	RoutingTagKey string `json:"-"`
 }
 
 type LeaderController struct {
@@ -66,44 +66,55 @@ type DroveNamespace struct {
 // Config struct used by the template engine
 type Config struct {
 	sync.RWMutex
-	Xproxy                  string
-	Address                 string           `json:"-"`
-	Port                    string           `json:"-"`
-	PortWithTLS             bool             `json:"-" toml:"port_use_tls"`
-	TLScertFile             string           `json:"-" toml:"port_tls_certfile"`
-	TLSkeyFile              string           `json:"-" toml:"port_tls_keyfile"`
-	DroveNamespaces         []DroveNamespace `json:"-" toml:"namespaces"`
-	EventRefreshIntervalSec int              `json:"-"  toml:"event_refresh_interval_sec"`
-	Nginxplusapiaddr        string           `json:"-"`
-	NginxReloadDisabled     bool             `json:"-" toml:"nginx_reload_disabled"`
-	NginxConfig             string           `json:"-" toml:"nginx_config"`
-	NginxTemplate           string           `json:"-" toml:"nginx_template"`
-	NginxCmd                string           `json:"-" toml:"nginx_cmd"`
-	NginxIgnoreCheck        bool             `json:"-" toml:"nginx_ignore_check"`
-	LeftDelimiter           string           `json:"-" toml:"left_delimiter"`
-	RightDelimiter          string           `json:"-" toml:"right_delimiter"`
-	MaxFailsUpstream        *int             `json:"max_fails,omitempty"`
-	FailTimeoutUpstream     string           `json:"fail_timeout,omitempty"`
-	SlowStartUpstream       string           `json:"slow_start,omitempty"`
-	LogLevel                string           `json:"-" toml:"loglevel"`
-	apiTimeout              int              `json:"-" toml:"api_timeout"`
-	Statsd                  StatsdConfig
-	LastUpdates             Updates
+	Xproxy                                      string
+	Address                                     string           `json:"-"`
+	Port                                        string           `json:"-"`
+	PortWithTLS                                 bool             `json:"-" toml:"port_use_tls"`
+	TLScertFile                                 string           `json:"-" toml:"port_tls_certfile"`
+	TLSkeyFile                                  string           `json:"-" toml:"port_tls_keyfile"`
+	DroveNamespaces                             []DroveNamespace `json:"-" toml:"namespaces"`
+	EventRefreshIntervalSec                     int              `json:"-" toml:"event_refresh_interval_sec"`
+	ProxyPlatform                               string           `json:"-" toml:"proxy_platform"`
+	Nginxplusapiaddr                            string           `json:"-" toml:"nginxplusapiaddr"`
+	NginxReloadDisabled                         bool             `json:"-" toml:"nginx_reload_disabled"`
+	NginxConfig                                 string           `json:"-" toml:"nginx_config"`
+	NginxTemplate                               string           `json:"-" toml:"nginx_template"`
+	NginxCmd                                    string           `json:"-" toml:"nginx_cmd"`
+	NginxIgnoreCheck                            bool             `json:"-" toml:"nginx_ignore_check"`
+	HaproxySocketAddr                           string           `json:"-" toml:"haproxysocketaddr"`
+	HaproxyDisableLargeBackendCountOptimisation bool             `json:"-" toml:"haproxy_disable_large_backend_count_optimisation"`
+	HaproxyReloadDisabled                       bool             `json:"-" toml:"haproxy_reload_disabled"`
+	HaproxyConfig                               string           `json:"-" toml:"haproxy_config"`
+	HaproxyTemplate                             string           `json:"-" toml:"haproxy_template"`
+	HaproxyReloadCmd                            string           `json:"-" toml:"haproxy_reload_cmd"`
+	HaproxyCmd                                  string           `json:"-" toml:"haproxy_cmd"`
+	HaproxyIgnoreCheck                          bool             `json:"-" toml:"haproxy_ignore_check"`
+	HaproxyServerNamePrefix                     string           `json:"-" toml:"haproxy_server_name_prefix"`
+	HaproxyServerNameHostPortSeparator          string           `json:"-" toml:"haproxy_server_name_host_port_delimiter"`
+	HaproxyBackendIncludeRoutingTagSuffix       bool             `json:"-" toml:"haproxy_backend_include_routing_tag_suffix"`
+	HaproxyBackendNameSeparator                 string           `json:"-" toml:"haproxy_backend_name_separator"`
+	HaproxyAddServerAttributesString            string           `json:"-" toml:"haproxy_add_server_attributes_string"`
+	HaproxyAddServerSSLAttributesString         string           `json:"-" toml:"haproxy_add_server_ssl_attributes_string"`
+	LeftDelimiter                               string           `json:"-" toml:"left_delimiter"`
+	RightDelimiter                              string           `json:"-" toml:"right_delimiter"`
+	NginxMaxFailsUpstream                       int              `json:"-" toml:"nginx_max_fails"`
+	NginxFailTimeoutUpstream                    string           `json:"-" toml:"nginx_fail_timeout"`
+	NginxSlowStartUpstream                      string           `json:"-" toml:"nginx_slow_start"`
+	NginxMaxFailsUpstreamCompatibility          *int             `json:"-" toml:"maxfailsupstream,omitempty"`
+	NginxFailTimeoutUpstreamCompatibility       *string          `json:"-" toml:"failtimeoutupstream,omitempty"`
+	NginxSlowStartUpstreamCompatibility         *string          `json:"-" toml:"slowstartupstream,omitempty"`
+	LogLevel                                    string           `json:"-" toml:"loglevel"`
+	DnsResolutionTimeoutSec                     int              `json:"-" toml:"dns_resolution_timeout_sec"`
+	apiTimeout                                  int              `json:"-" toml:"api_timeout"`
+	LastUpdates                                 Updates
 }
 
 // Updates timings used for metrics
 type Updates struct {
-	LastSync           time.Time
-	LastConfigRendered time.Time
-	LastConfigValid    time.Time
-	LastNginxReload    time.Time
-}
-
-// StatsdConfig statsd stuct
-type StatsdConfig struct {
-	Addr       string
-	Namespace  string
-	SampleRate int `toml:"sample_rate"`
+	LastSync               time.Time
+	LastConfigRendered     time.Time
+	LastConfigValid        time.Time
+	LastProxyProgramReload time.Time
 }
 
 // Status health status struct
@@ -120,11 +131,21 @@ type EndpointStatus struct {
 	Message   string
 }
 
+type NamespaceStatus struct {
+	Namespace string
+	Healthy   bool
+	Message   string
+}
+
 // Health struct
 type Health struct {
-	Config             Status
-	Template           Status
-	NamespaceEndpoints map[string][]EndpointStatus
+	sync.RWMutex
+	Config                Status
+	Template              Status
+	UpstreamUpdatesViaAPI Status
+	ResolverHealth        Status
+	NamespaceHealth       map[string]NamespaceStatus
+	NamespaceEndpoints    map[string][]EndpointStatus
 }
 
 // Global variables
@@ -137,6 +158,19 @@ var health Health
 var lastConfig string
 var db DataManager
 var logger = logrus.New()
+
+var ConfigPath string
+var templatePath string
+var ReloadCmd string
+var ProgramCmd string
+var ConfigReloadDisabled bool
+var ProgramCmdConfFileArg string
+var ProgramCmdConfTestArg string
+
+var Metrics DroveGatewayPrometheusMetrics
+
+// Global proxy manager instance
+var GlobalProxyManager ProxyManager
 
 // set log level
 func setloglevel() {
@@ -153,7 +187,7 @@ func setloglevel() {
 	case "error":
 		logLevel = logrus.ErrorLevel
 	default:
-		logger.Error("unknown loglevel. Defaulting to info")
+		logger.Warn("unknown loglevel. Defaulting to info")
 		logLevel = logrus.InfoLevel
 	}
 
@@ -162,8 +196,9 @@ func setloglevel() {
 
 // set DataManager
 func setupDataManager() {
-	db = *NewDataManager(config.Xproxy, config.LeftDelimiter, config.RightDelimiter, config.MaxFailsUpstream,
-		config.FailTimeoutUpstream, config.SlowStartUpstream)
+	db = *NewDataManager(config.Xproxy, config.ProxyPlatform, config.LeftDelimiter, config.RightDelimiter,
+		config.NginxMaxFailsUpstream, config.NginxFailTimeoutUpstream, config.NginxSlowStartUpstream,
+		config.HaproxyAddServerAttributesString, config.HaproxyAddServerSSLAttributesString, config.HaproxyServerNamePrefix, config.HaproxyServerNameHostPortSeparator, config.HaproxyBackendNameSeparator, config.HaproxyBackendIncludeRoutingTagSuffix)
 	for _, nsConfig := range config.DroveNamespaces {
 		db.CreateNamespace(nsConfig.Name, nsConfig.Drove, nsConfig.User, nsConfig.Pass,
 			nsConfig.AccessToken, nsConfig.Realm, nsConfig.RealmSuffix, nsConfig.RoutingTag, nsConfig.LeaderVHost)
@@ -177,9 +212,32 @@ var eventRefreshSignalQueue = make(chan bool, 2)
 // Global http transport for connection reuse
 var tr = &http.Transport{MaxIdleConnsPerHost: 10, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 
-func newHealth() Health {
-	var h Health
-	h.NamespaceEndpoints = make(map[string][]EndpointStatus)
+func newHealth() {
+	health.NamespaceEndpoints = make(map[string][]EndpointStatus)
+	health.NamespaceHealth = make(map[string]NamespaceStatus)
+	health.UpstreamUpdatesViaAPI = Status{
+		Healthy: false,
+		Message: "pending first check",
+	}
+	health.ResolverHealth = Status{
+		Healthy: true,
+		Message: "pending first check",
+	}
+	if ConfigReloadDisabled {
+		health.Config.Message = "Config Reload disabled"
+		health.Config.Healthy = true
+		health.Template.Message = "Templating disabled"
+		health.Template.Healthy = true
+	} else {
+		health.Config = Status{
+			Healthy: false,
+			Message: "pending first check",
+		}
+		health.Template = Status{
+			Healthy: false,
+			Message: "pending first check",
+		}
+	}
 	for _, nsConfig := range config.DroveNamespaces {
 		e := []EndpointStatus{}
 		for _, ep := range nsConfig.Drove {
@@ -190,9 +248,13 @@ func newHealth() Health {
 			s.Message = "OK"
 			e = append(e, s)
 		}
-		h.NamespaceEndpoints[nsConfig.Name] = e
+		health.NamespaceEndpoints[nsConfig.Name] = e
+		health.NamespaceHealth[nsConfig.Name] = NamespaceStatus{
+			Namespace: nsConfig.Name,
+			Healthy:   false,
+			Message:   "pending first check",
+		}
 	}
-	return h
 }
 
 func setupDefaultConfig() {
@@ -210,14 +272,110 @@ func setupDefaultConfig() {
 	if config.apiTimeout <= 0 {
 		config.apiTimeout = 10
 	}
+
+	if config.DnsResolutionTimeoutSec <= 0 {
+		config.DnsResolutionTimeoutSec = 2
+	}
+
+	//default proxyplatform as nginx
+	if config.ProxyPlatform == "" {
+		config.ProxyPlatform = "nginx"
+	}
+
+	//set proxy platform parameters
+	if config.ProxyPlatform == "nginx" {
+		ConfigPath = config.NginxConfig
+		templatePath = config.NginxTemplate
+		ReloadCmd = config.NginxCmd
+		ProgramCmd = config.NginxCmd
+		ConfigReloadDisabled = config.NginxReloadDisabled
+		if ConfigReloadDisabled {
+			logger.Warn("Nginx reloads are disabled. Although reloads won't be done it is important that the configured config uses upstream state file block in upstream block so as to allow nginx_http_api to update upstreams to state files")
+		}
+		ProgramCmdConfFileArg = "-c"
+		ProgramCmdConfTestArg = "-t"
+		//default NginxMaxFailsUpstream is 0 as omitempty is not present
+		//Older versions of nixy used different naming for these parameters, so we support both for backward compatibility
+		if config.NginxMaxFailsUpstreamCompatibility != nil {
+			config.NginxMaxFailsUpstream = *config.NginxMaxFailsUpstreamCompatibility
+			logger.Warn("maxfailsupstream is deprecated, please use nginx_max_fails instead")
+		}
+		if config.NginxFailTimeoutUpstreamCompatibility != nil {
+			config.NginxFailTimeoutUpstream = *config.NginxFailTimeoutUpstreamCompatibility
+			logger.Warn("failtimeoutupstream is deprecated, please use nginx_fail_timeout instead")
+		}
+		if config.NginxSlowStartUpstreamCompatibility != nil {
+			config.NginxSlowStartUpstream = *config.NginxSlowStartUpstreamCompatibility
+			logger.Warn("slowstartupstream is deprecated, please use nginx_slow_start instead")
+		}
+		if config.NginxFailTimeoutUpstream == "" || !regexp.MustCompile(`^\d+s$`).MatchString(config.NginxFailTimeoutUpstream) {
+			config.NginxFailTimeoutUpstream = "0s"
+			logger.Error("Invalid input to failtimeoutupstream, defaulting to " + config.NginxFailTimeoutUpstream)
+		}
+		if config.NginxSlowStartUpstream == "" || !regexp.MustCompile(`^\d+s$`).MatchString(config.NginxSlowStartUpstream) {
+			config.NginxSlowStartUpstream = "0s"
+			logger.Error("Invalid input to slowstartupstream, defaulting to " + config.NginxSlowStartUpstream)
+		}
+		logger.WithFields(logrus.Fields{"max_fails": config.NginxMaxFailsUpstream, "fail_timeout": config.NginxFailTimeoutUpstream, "slow_start": config.NginxSlowStartUpstream}).Debug("Nginx upstream healthcheck parameters set")
+	} else if config.ProxyPlatform == "haproxy" {
+		ConfigPath = config.HaproxyConfig
+		templatePath = config.HaproxyTemplate
+		ReloadCmd = config.HaproxyReloadCmd
+		ProgramCmd = config.HaproxyCmd
+		ConfigReloadDisabled = config.HaproxyReloadDisabled
+		if ConfigReloadDisabled {
+			logger.Warn("Haproxy reloads are DISABLED. Unlike in nginx, This is NOT a recommended configuration as haproxy is dependent on config to maintain state across restarts. haproxy's reload from global state file feature should be used and restarts accordingly handled\n")
+		}
+		ProgramCmdConfFileArg = "-f"
+		ProgramCmdConfTestArg = "-c"
+		if config.HaproxyBackendNameSeparator == "" {
+			config.HaproxyBackendNameSeparator = "_"
+		}
+		if config.HaproxyServerNamePrefix == "" {
+			config.HaproxyServerNamePrefix = "server"
+		}
+		if config.HaproxyBackendIncludeRoutingTagSuffix {
+			logger.Info("Haproxy backend names will include routing tag suffix")
+		}
+		if config.HaproxyServerNameHostPortSeparator == "" {
+			config.HaproxyServerNameHostPortSeparator = "_"
+		}
+		if config.HaproxyAddServerAttributesString == "" {
+			config.HaproxyAddServerAttributesString = ""
+			//E.g check inter 2000 fall 3 rise 2. Not enabling healthchecks by default.
+		}
+		if config.HaproxyAddServerSSLAttributesString == "" {
+			config.HaproxyAddServerSSLAttributesString = "ssl verify none"
+			//E.g ssl verify required ca-file ca-certificates.crt
+		}
+	}
 }
 
 func validateConfig() error {
 	for _, nsConfig := range config.DroveNamespaces {
 		if nsConfig.Name == "" {
-			return errors.New("Drove namespace name is mandatory")
+			return errors.New("drove namespace name is mandatory")
 		}
 	}
+
+	if config.ProxyPlatform == "haproxy" {
+		if (config.HaproxyReloadDisabled) && (config.HaproxySocketAddr == "") {
+			return errors.New("haproxy socket address is mandatory when reloads are disabled, can't update runtime servers")
+		}
+		if config.HaproxyIgnoreCheck {
+			logger.Warn("Haproxy config check is disabled, this may lead to invalid configs being applied")
+		}
+	}
+
+	if config.ProxyPlatform == "nginx" {
+		if (config.NginxReloadDisabled) && (config.Nginxplusapiaddr == "") {
+			return errors.New("nginx-plus api address is mandatory when reloads are disabled. can't update upstreams")
+		}
+		if config.NginxIgnoreCheck {
+			logger.Warn("Nginx config check is disabled, this may lead to invalid configs being applied")
+		}
+	}
+
 	return nil
 }
 
@@ -242,31 +400,6 @@ func nixyReload(w http.ResponseWriter, r *http.Request) {
 }
 
 func nixyHealth(w http.ResponseWriter, r *http.Request) {
-	if config.NginxReloadDisabled {
-		health.Template.Message = "Templating disabled"
-		health.Template.Healthy = true
-		health.Config.Message = "Config templating disabled"
-		health.Config.Healthy = true
-	} else {
-		err := checkTmpl()
-		if err != nil {
-			health.Template.Message = err.Error()
-			health.Template.Healthy = false
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			health.Template.Message = "OK"
-			health.Template.Healthy = true
-		}
-		err = checkConf(lastConfig)
-		if err != nil {
-			health.Config.Message = err.Error()
-			health.Config.Healthy = false
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			health.Config.Message = "OK"
-			health.Config.Healthy = true
-		}
-	}
 	anyNamespaceDown := false
 	for _, nsEnpoint := range health.NamespaceEndpoints {
 		allBackendsDownForGivenNS := true
@@ -278,12 +411,14 @@ func nixyHealth(w http.ResponseWriter, r *http.Request) {
 		}
 		anyNamespaceDown = anyNamespaceDown || allBackendsDownForGivenNS
 	}
-	if anyNamespaceDown {
+
+	// the health is set by the respective workers, we just read it here.
+	if !health.Template.Healthy || !health.Config.Healthy || !health.ResolverHealth.Healthy || !health.UpstreamUpdatesViaAPI.Healthy || anyNamespaceDown {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 
 	w.Header().Add("Content-Type", "application/json; charset=utf-8")
-	b, _ := json.MarshalIndent(health, "", "  ")
+	b, _ := json.MarshalIndent(&health, "", "  ")
 	w.Write(b)
 	return
 }
@@ -302,6 +437,47 @@ func nixyVersion(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+func updateHealthSection(section string, status bool, message string) {
+	var statusFloat float64
+	if status {
+		statusFloat = 1.0
+	} else {
+		statusFloat = 0.0
+	}
+	health.Lock()
+	switch section {
+	case "ResolverHealth":
+		health.ResolverHealth.Healthy = status
+		health.ResolverHealth.Message = message
+		Metrics.GaugeResolverHealthy.Set(statusFloat)
+	case "Config":
+		health.Config.Healthy = status
+		health.Config.Message = message
+		Metrics.GaugeConfigGenerationHealthy.Set(statusFloat)
+	case "Template":
+		health.Template.Healthy = status
+		health.Template.Message = message
+		Metrics.GaugeTemplateRenderingHealthy.Set(statusFloat)
+	case "UpstreamUpdatesViaAPI":
+		health.UpstreamUpdatesViaAPI.Healthy = status
+		health.UpstreamUpdatesViaAPI.Message = message
+		Metrics.GaugeUpstreamUpdatesViaAPIHealthy.Set(statusFloat)
+	default:
+		return
+	}
+	health.Unlock()
+}
+
+// Implement ProxyManager interface for NginxAPIManager
+func (manager *NginxAPIManager) Reconcile(data *RenderingData) error {
+	return manager.ReconcileAllVhosts(data)
+}
+
+// Implement ProxyManager interface for HaproxyManager
+func (manager *HaproxyManager) Reconcile(data *RenderingData) error {
+	return manager.ReconcileAllBackends(data, config.HaproxyDisableLargeBackendCountOptimisation)
+}
+
 func main() {
 	configtoml := flag.String("f", "nixy.toml", "Path to config. (default nixy.toml)")
 	versionflag := flag.Bool("v", false, "prints current nixy version")
@@ -312,7 +488,7 @@ func main() {
 		fmt.Printf("date: %s\n", date)
 		os.Exit(0)
 	}
-	file, err := ioutil.ReadFile(*configtoml)
+	file, err := os.ReadFile(*configtoml)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
@@ -332,16 +508,14 @@ func main() {
 		}).Fatal("problem in config")
 	}
 
-	statsd, err = setupStatsd()
-	if err != nil {
-		logger.WithFields(logrus.Fields{
-			"error": err.Error(),
-		}).Error("unable to Dial statsd")
-		statsd = g2s.Noop() //fallback to Noop.
-	}
 	setupDefaultConfig()
 	setupPrometheusMetrics()
 	setupDataManager()
+	GlobalProxyManager = setupGlobalProxyManager()
+	if GlobalProxyManager == nil {
+		logger.Fatal("Failed to setup global proxy manager, exiting nixy")
+	}
+
 	mux := mux.NewRouter()
 	mux.HandleFunc("/", nixyVersion)
 	mux.HandleFunc("/v1/reload", nixyReload)
@@ -371,7 +545,7 @@ func main() {
 			Handler: mux,
 		}
 	}
-	health = newHealth()
+	newHealth()
 	setupEndpointHealth()
 	setupPollEvents()
 	reloadWorker() //Reloader
@@ -385,6 +559,6 @@ func main() {
 		err = s.ListenAndServe()
 	}
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 }

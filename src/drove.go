@@ -92,7 +92,7 @@ func fetchRecentEvents(httpClient *http.Client, syncPoint *CurrSyncPoint, namesp
 		logger.WithFields(logrus.Fields{
 			"namespace": namespace,
 		}).Error("Error loading drove config")
-		err := errors.New("Error loading Drove Config")
+		err := errors.New("error loading Drove Config")
 		return nil, err
 	}
 
@@ -100,11 +100,13 @@ func fetchRecentEvents(httpClient *http.Client, syncPoint *CurrSyncPoint, namesp
 	for _, es := range health.NamespaceEndpoints[namespace] {
 		if es.Healthy {
 			endpoint = es.Endpoint
+			Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(0)
 			break
 		}
 	}
 	if endpoint == "" {
 		err := errors.New("all endpoints are down")
+		Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(1)
 		return nil, err
 	}
 
@@ -149,14 +151,18 @@ func refreshLeaderData(namespace string) bool {
 	for _, es := range health.NamespaceEndpoints[namespace] {
 		if es.Namespace == namespace && es.Healthy {
 			endpoint = es.Endpoint
+			Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(0)
 			break
 		}
 	}
 	if endpoint == "" {
 		logger.Error("all endpoints are down")
-		go countAllEndpointsDownErrors.WithLabelValues(namespace).Inc()
+		Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(1)
 		return false
 	}
+
+	Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(0)
+
 	currentLeader, err := db.ReadLeader(namespace)
 	if err != nil {
 		logger.Error("Error while reading current leader for namespace" + namespace)
@@ -306,6 +312,12 @@ func setupPollEvents() {
 }
 
 func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
+	health.Lock()
+	defer health.Unlock()
+
+	healthyCount := 0
+	configuredCount := len(health.NamespaceEndpoints[namespace])
+
 	for i, es := range health.NamespaceEndpoints[namespace] {
 		req, err := http.NewRequest("GET", es.Endpoint+"/apis/v1/ping", nil)
 		if err != nil {
@@ -340,7 +352,7 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 				"endpoint":  es.Endpoint,
 				"namespace": namespace,
 			}).Error("endpoint is down")
-			go countEndpointDownErrors.WithLabelValues(namespace).Inc()
+			go Metrics.CountEndpointDownErrors.WithLabelValues(namespace).Inc()
 			health.NamespaceEndpoints[namespace][i].Healthy = false
 			health.NamespaceEndpoints[namespace][i].Message = err.Error()
 			continue
@@ -353,11 +365,29 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 		}
 		health.NamespaceEndpoints[namespace][i].Healthy = true
 		health.NamespaceEndpoints[namespace][i].Message = "OK"
+		healthyCount++
 		logger.WithFields(logrus.Fields{
 			"host":      es.Endpoint,
 			"namespace": namespace,
-		}).Debug(" Endpoint is healthy")
+		}).Trace(" Endpoint is healthy")
 	}
+
+	// Set the overall health status for the namespace
+	nsHealth := health.NamespaceHealth[namespace]
+	if healthyCount == configuredCount {
+		nsHealth.Healthy = true
+		nsHealth.Message = "All endpoints are healthy"
+	} else if healthyCount > 0 {
+		nsHealth.Healthy = true // Still considered healthy if at least one endpoint is up
+		nsHealth.Message = fmt.Sprintf("%d out of %d endpoints are healthy", healthyCount, configuredCount)
+	} else {
+		nsHealth.Healthy = false
+		nsHealth.Message = "All endpoints are down"
+	}
+	health.NamespaceHealth[namespace] = nsHealth
+
+	Metrics.GaugeConfiguredEndpoints.WithLabelValues(namespace).Set(float64(configuredCount))
+	Metrics.GaugeHealthyEndpoints.WithLabelValues(namespace).Set(float64(healthyCount))
 }
 
 func endpointHealth(namespace string) {
@@ -434,6 +464,8 @@ func matchingVhost(vHost string, realms []string) bool {
 	return false
 }
 
+// vhosts should be case insensitive as per standards. altough nginx is case insensitive, some other proxies like haproxy are not as they expect upstreams to handle it.
+// Also ensure routing tag values are grouped case insensitively.
 func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vhosts) bool {
 	config.Lock()
 	defer config.Unlock()
@@ -442,7 +474,13 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 	if len(droveConfig.Realm) > 0 {
 		realms = strings.Split(droveConfig.Realm, ",")
 	}
+
+	var appsWithRoutingTag []string
+	var appsWithoutRoutingTag []string
+	var hostsIgnoredByRealm []string
+
 	for _, app := range jsonapps.Apps {
+		app.Vhost = strings.ToLower(app.Vhost)
 		var newapp = App{}
 		for _, task := range app.Hosts {
 			var newtask = Host{}
@@ -458,25 +496,16 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 				vhosts.Vhosts[app.Vhost] = true
 				newapp.ID = app.Vhost
 				newapp.Vhost = app.Vhost
-
 				var groupName = app.Vhost
 				if len(droveConfig.RoutingTag) > 0 {
-					if tagValue, ok := app.Tags[droveConfig.RoutingTag]; ok {
-						logger.WithFields(logrus.Fields{
-							"tag":   droveConfig.RoutingTag,
-							"vhost": newapp.Vhost,
-							"value": tagValue,
-						}).Debug("routing tag found")
-						groupName = tagValue
+					if tagValue, ok := app.Tags[droveConfig.RoutingTag]; ok && tagValue != "" {
+						// Collect apps that have the routing tag
+						appsWithRoutingTag = append(appsWithRoutingTag, fmt.Sprintf("%s (value: %s)", newapp.Vhost, tagValue))
+						groupName = strings.ToLower(tagValue)
 					} else {
-
-						logger.WithFields(logrus.Fields{
-							"tag":   droveConfig.RoutingTag,
-							"vhost": newapp.Vhost,
-						}).Debug("no routing tag found")
+						// Collect apps that are missing the routing tag
+						appsWithoutRoutingTag = append(appsWithoutRoutingTag, newapp.Vhost)
 					}
-				} else {
-					logrus.Debug("No routing tag found")
 				}
 
 				var hostGroup = HostGroup{}
@@ -505,13 +534,36 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 				}
 				apps[app.Vhost] = newapp
 			} else {
-				logger.WithFields(logrus.Fields{
-					"realm": droveConfig.Realm,
-					"vhost": app.Vhost,
-				}).Warn("Host ignored due to realm mismath")
+				hostsIgnoredByRealm = append(hostsIgnoredByRealm, app.Vhost)
 			}
 		}
 	}
+
+	// Log the cumulative results for routing tags
+	if len(droveConfig.RoutingTag) > 0 {
+		logger.WithFields(logrus.Fields{
+			"tag":                    droveConfig.RoutingTag,
+			"apps_with_tag":          appsWithRoutingTag,
+			"apps_without_tag":       appsWithoutRoutingTag,
+			"total_apps_with_tag":    len(appsWithRoutingTag),
+			"total_apps_without_tag": len(appsWithoutRoutingTag),
+			"namespace":              droveConfig.Name,
+		}).Debug("Routing tag processing summary")
+		// Update Prometheus gauges for routing tags
+		Metrics.GaugeAppsWithRoutingTag.WithLabelValues(droveConfig.Name).Set(float64(len(appsWithRoutingTag)))
+		Metrics.GaugeAppsWithoutRoutingTag.WithLabelValues(droveConfig.Name).Set(float64(len(appsWithoutRoutingTag)))
+	}
+
+	// Log the cumulative results for realm mismatches
+	if len(hostsIgnoredByRealm) > 0 {
+		logger.WithFields(logrus.Fields{
+			"configured_realms": droveConfig.Realm,
+			"ignored_hosts":     hostsIgnoredByRealm,
+			"total_ignored":     len(hostsIgnoredByRealm),
+			"namespace":         droveConfig.Name,
+		}).Debug("Hosts ignored due to realm mismatch summary")
+	}
+	Metrics.GaugeAppsIgnoredByRealm.WithLabelValues(droveConfig.Name).Set(float64(len(hostsIgnoredByRealm)))
 
 	currentApps, er := db.ReadApps(droveConfig.Name)
 	if er != nil {
@@ -540,7 +592,7 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 }
 
 func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) bool {
-	logger.Debug("Reloading config for namespace" + namespace)
+	logger.Trace("Refreshing Apps Data for namespace " + namespace)
 	start := time.Now()
 	droveConfig, er := db.ReadDroveConfig(namespace)
 	if er != nil {
@@ -560,13 +612,12 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 				"error": err.Error(),
 			}).Error("unable to sync from drove")
 		}
-		go statsCount("reload.failed", 1)
-		go countDroveAppSyncErrors.WithLabelValues(namespace).Inc()
+		go Metrics.CountDroveAppSyncErrors.WithLabelValues(namespace).Inc()
 		return false
 	}
 	equal := syncAppsAndVhosts(droveConfig, &jsonapps, &vhosts)
 	if equal && !leaderShifted {
-		logger.Debug("no relevant App Data changes")
+		logger.Trace("no relevant App Data changes")
 		return false
 	}
 
