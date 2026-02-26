@@ -361,7 +361,9 @@ func (manager *HaproxyManager) removeStaleServers(backend string, currentServers
 						}
 					}
 				}
-				errs = append(errs, fmt.Sprintf("delete %s: %v", srv.Name, err))
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("delete %s: %v", srv.Name, err))
+				}
 			} else {
 				Metrics.HaproxyAPICallsSuccessful.WithLabelValues("delete_server").Inc()
 			}
