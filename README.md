@@ -192,6 +192,15 @@ You can iteratively loop over applications directly as `.Apps`:
 {{`{{end}}`}}
 ```
 
+## Advanced Configuration Notes & Gotchas
+
+When migrating or setting up Drove Gateway in complex environments, note the following nuances extracted from the code:
+
+* **Proxy Executable Commands**: The `nginx_cmd`, `haproxy_cmd`, and respective reload commands fully support command-line arguments. This is useful if your proxy is containerized (e.g., setting `nginx_cmd = "docker exec nginx nginx"`) or if you use alternative binaries like OpenResty. 
+* **Dynamic HAProxy Server Attributes**: Not all `default-server` properties are supported by the HAProxy runtime API. Attributes like `no-check` or `init-addr` are ignored for dynamic servers. It's recommended to include `on-marked-down shutdown-sessions` inside your `haproxy_add_server_attributes_string` to forcefully terminate lingering connections when a backend instance is removed. Also, advanced features like disabling HTTP/2 on the backend can be dynamically pushed using `alpn http/1.1` in this same string.
+* **HTTPS/SSL Attributes via Runtime API**: HAProxy runtime APIs cannot inject base SSL contexts (like cipher suites or root certificates) dynamically for `https` upstreams. The static `haproxy.tmpl` configuration must define these globally. The `haproxy_add_server_ssl_attributes_string` exists strictly to append override flags (e.g., `ssl verify required ca-file ca-certificates.crt`) when a server is added.
+* **FQDN DNS Resolution**: Dynamic proxy APIs natively manage routing via explicit IP addresses and do not automatically resolve FQDNs actively. Drove Gateway internally resolves FQDNs to IPs before adding them to NGINX Plus or HAProxy. Ensure your host system's local DNS resolver is highly reliable (potentially serving stale records like RFC8767 out-of-bounds) to prevent dropping hosts if internal DNS temporarily flakes. 
+
 ## HAProxy Support
 
 Drove-gateway can be configured to use HAProxy instead of NGINX by setting the `proxy_platform="haproxy"` flag in the `nixy.toml` configuration file. Extensive configuration options are provided to tune its behavior, including support for HAProxy Runtime APIs (`haproxysocketaddr`) which allows for dynamically updating servers on the fly without an explicit reload.
