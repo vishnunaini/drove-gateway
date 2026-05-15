@@ -36,8 +36,7 @@ jobs:
             systemd-rpm-macros \
             rpm-build \
             rpmdevtools \
-            redhat-rpm-config \
-            curl
+            redhat-rpm-config
 
       - name: Configure Git
         run: git config --global --add safe.directory "$(pwd)"
@@ -54,14 +53,16 @@ jobs:
           cp rpmbuild/SPECS/drove-gateway.spec ~/rpmbuild/SPECS/
           tar --exclude='.git' --exclude='.github' --exclude='rpmbuild' \
               -czf ~/rpmbuild/SOURCES/drove-gateway-${VERSION}.tar.gz \
-              --transform "s|^\./|drove-gateway/|" \
+              --transform 's|^\./|drove-gateway/|' \
               -C . .
 
       - name: Build
         run: rpmbuild -ba ~/rpmbuild/SPECS/drove-gateway.spec
 
       - name: Verify
-        run: rpm -qi ~/rpmbuild/RPMS/$(uname -m)/drove-gateway-*.rpm
+        run: |
+          rpm -qi  ~/rpmbuild/RPMS/$(uname -m)/drove-gateway-*.rpm
+          rpm -pql ~/rpmbuild/RPMS/$(uname -m)/drove-gateway-*.rpm
 
       - name: Copy artifacts to workspace
         run: |

@@ -93,10 +93,24 @@ jobs:
             dpkg-buildpackage -us -uc -b
           fi
 
-      - name: Verify
+      - name: Verify package contents
         run: |
-          dpkg -I ../*.deb
-          lintian -i ../*.deb || true
+          ls -lh ../*.deb || echo "No .deb files generated"
+
+          if ls ../*.deb 1> /dev/null 2>&1; then
+            echo "Package contents:"
+            dpkg -c ../*.deb | head -30
+          fi
+
+      - name: Verify package integrity
+        run: |
+          if ls ../*.deb 1> /dev/null 2>&1; then
+            echo "Package information:"
+            dpkg -I ../*.deb
+            echo
+            echo "Running lintian checks..."
+            lintian -i ../*.deb || true
+          fi
 
       - name: Generate checksums
         run: |
@@ -108,6 +122,7 @@ jobs:
         run: |
           mkdir -p debian-release-assets
           cp ../*.deb debian-release-assets/
+          cp ../*.changes debian-release-assets/ 2>/dev/null || true
           cp ../SHA256SUMS-${{ matrix.distro }}.txt debian-release-assets/
 
       - name: Create GitHub Release
