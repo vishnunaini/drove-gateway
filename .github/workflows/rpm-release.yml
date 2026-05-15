@@ -1,0 +1,92 @@
+name: RPM Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  release-rpm:
+    runs-on: ubuntu-latest
+    # Run on manual trigger for the selected branch, or on milestone tags from master
+    if: github.event_name == 'workflow_dispatch' || github.event.base_ref == 'refs/heads/master'
+    strategy:
+      matrix:
+        include:
+          - el: el9
+            container: registry.access.redhat.com/ubi9/ubi:latest
+          - el: el10
+            container: registry.access.redhat.com/ubi10/ubi:latest
+    container: ${{ matrix.container }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          dnf install -y \
+            gcc \
+            git \
+            golang \
+            systemd-rpm-macros \
+            rpm-build \
+            rpmdevtools \
+            redhat-rpm-config \
+            curl
+
+      - name: Configure Git
+        run: git config --global --add safe.directory "$(pwd)"
+
+      - name: Update spec version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^Version:.*/Version:        ${VERSION}/" rpmbuild/SPECS/drove-gateway.spec
+
+      - name: Prepare sources
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          rpmdev-setuptree
+          cp rpmbuild/SPECS/drove-gateway.spec ~/rpmbuild/SPECS/
+          tar --exclude='.git' --exclude='.github' --exclude='rpmbuild' \
+              -czf ~/rpmbuild/SOURCES/drove-gateway-${VERSION}.tar.gz \
+              --transform "s|^\./|drove-gateway/|" \
+              -C . .
+
+      - name: Build
+        run: rpmbuild -ba ~/rpmbuild/SPECS/drove-gateway.spec
+
+      - name: Verify
+        run: rpm -qi ~/rpmbuild/RPMS/$(uname -m)/drove-gateway-*.rpm
+
+      - name: Copy artifacts to workspace
+        run: |
+          mkdir -p rpm-output
+          cp ~/rpmbuild/RPMS/$(uname -m)/*.rpm rpm-output/
+          cp ~/rpmbuild/SRPMS/*.src.rpm        rpm-output/
+          sha256sum rpm-output/*.rpm > rpm-output/SHA256SUMS-${{ matrix.el }}.txt
+          cat rpm-output/SHA256SUMS-${{ matrix.el }}.txt
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          body: |
+            ## RPM Packages
+
+            Available for **EL9** (RHEL 9 / AlmaLinux 9 / Rocky Linux 9) and **EL10** (RHEL 10 / AlmaLinux 10).
+
+            ### Installation
+            ```bash
+            dnf install drove-gateway-*.$(uname -m).rpm
+            systemctl enable --now drove.gateway.service
+            ```
+          files: rpm-output/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
