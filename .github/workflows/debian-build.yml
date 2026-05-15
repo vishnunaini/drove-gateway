@@ -81,7 +81,7 @@ jobs:
 
       - name: Upload Debian package artifact
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: debian-${{ matrix.distro }}-packages
           path: |
@@ -92,7 +92,7 @@ jobs:
 
       - name: Upload build logs artifact
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: debian-${{ matrix.distro }}-build-logs
           path: ../*.build

@@ -60,7 +60,7 @@ jobs:
           cp ~/rpmbuild/SRPMS/*.src.rpm        rpm-output/
 
       - name: Upload RPM artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: rpm-packages-${{ matrix.el }}
           path: rpm-output/
