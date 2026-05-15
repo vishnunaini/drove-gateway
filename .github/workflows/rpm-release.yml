@@ -75,6 +75,8 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
           body: |
             ## RPM Packages
 
@@ -86,11 +88,5 @@ jobs:
             systemctl enable --now drove.gateway.service
             ```
           files: rpm-output/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-            ~/rpmbuild/SRPMS/*.src.rpm
-            ~/rpmbuild/RPMS/x86_64/SHA256SUMS.txt
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
