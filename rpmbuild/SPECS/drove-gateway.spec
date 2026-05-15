@@ -6,7 +6,10 @@ Release:        %{?snapshot_release}%{!?snapshot_release:1}%{?dist}
 Summary:        Drove gateway daemon for Nginx/HAProxy configuration management
 License:        Apache-2.0
 URL:            https://github.com/phonepe/drove-gateway
+
 Source0:        %{name}-%{version}.tar.gz
+
+%define build_version %{version}%{?snapshot_release:-%{snapshot_release}}%{!?snapshot_release:%{nil}}
 
 BuildRequires:  gcc
 BuildRequires:  golang >= 1.23
@@ -32,13 +35,10 @@ export GO111MODULE=on
 export GOPROXY=https://proxy.golang.org,direct
 export GOTOOLCHAIN=local
 
-# Determine version string: for snapshots, append Release field info to version
-%define build_version %{version}%{?snapshot_release:-%{snapshot_release}}%{!?snapshot_release:%{nil}}
-
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
-LDFLAGS="-X main.version=%{build_version} -X main.date=$(date '+%Y-%m-%dT%H:%M:%S')"
-if [ "$COMMIT" != "unknown" ]; then
-    LDFLAGS="$LDFLAGS -X main.commit=$COMMIT"
+LDFLAGS="-X main.version=%{build_version} -X main.date=$(date '+%%Y-%%m-%%dT%%H:%%M:%%S')"
+if [ "$COMMIT" != "unknown" ]; then \
+    LDFLAGS="$LDFLAGS -X main.commit=$COMMIT"; \
 fi
 go build -mod=mod -v -ldflags="$LDFLAGS" -o nixy .
 
