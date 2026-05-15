@@ -10,15 +10,15 @@ LDFLAGS := -X "main.version=$(VERSION)" -X "main.date=$(DATE)" -X "main.commit=$
 # Ensure proxy settings are passed to the build
 export http_proxy
 export https_proxy
+export GOTOOLCHAIN=local
 
 %:
-	dh $@
+	dh $@ --buildsystem=golang --with=golang
 
 # Override build step: compile the Go binary
 # go.mod lives in src/, cmd/nixy/ lives at the repo root
 override_dh_auto_build:
-	cd src && go mod tidy
-	cd src && go build -v -ldflags '$(LDFLAGS)' -o ../nixy ../cmd/nixy
+	cd src && go build -mod=mod -v -ldflags '$(LDFLAGS)' -o ../nixy ../cmd/nixy
 
 # Override install step: install binary, configs, and templates
 override_dh_auto_install:

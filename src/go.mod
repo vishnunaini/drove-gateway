@@ -5,6 +5,7 @@ go 1.23
 require (
         github.com/BurntSushi/toml v1.3.2
         github.com/gorilla/mux v1.8.1
+        github.com/haproxytech/client-native/v5 v5.1.23
         github.com/nginxinc/nginx-plus-go-client v1.3.0
         github.com/peterbourgon/g2s v0.0.0-20170223122336-d4e7ad98afea
         github.com/prometheus/client_golang v1.14.0

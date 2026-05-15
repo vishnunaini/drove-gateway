@@ -3,7 +3,8 @@ Section: net
 Priority: optional
 Maintainer: vishnunaini <vishnu.naini@phonepe.com>
 Build-Depends: debhelper-compat (= 12),
-               golang-go (>= 1.23),
+               dh-sequence-golang,
+               golang-any (>= 2:1.23~),
                git
 Standards-Version: 4.5.1
 Homepage: https://github.com/phonepe/drove-gateway

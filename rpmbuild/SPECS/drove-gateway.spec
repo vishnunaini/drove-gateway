@@ -35,9 +35,9 @@ Features:
 
 %build
 # go.mod lives in src/, cmd/ lives at the repo root
+export GOTOOLCHAIN=local
 cd src
-go mod tidy
-go build -v -ldflags="-X main.version=%{version} -X main.date=$(date '+%%Y-%%m-%%d %%H:%%M:%%S') -X main.commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" -o ../nixy ../cmd/nixy
+go build -mod=mod -v -ldflags="-X main.version=%{version} -X main.date=$(date '+%%Y-%%m-%%d %%H:%%M:%%S') -X main.commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" -o ../nixy ../cmd/nixy
 
 %install
 # Create directories
