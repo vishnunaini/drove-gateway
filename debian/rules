@@ -24,6 +24,10 @@ export DH_GOPKG=nixy
 # Skip debugsource packages (no .ddebs)
 export DEB_BUILD_OPTIONS=noddebs
 
+# Disable debug section compression for C/C++
+export DEB_CFLAGS_MAINT_APPEND=-gz=none
+export DEB_CXXFLAGS_MAINT_APPEND=-gz=none
+
 # Disable dwz for Go binaries (avoids errors with compressed debug sections)
 export DH_DWZ_DISABLE=1
 
@@ -60,6 +64,10 @@ override_dh_installsystemd:
 # Strip binaries and create shlibs
 override_dh_strip:
 	dh_strip
+
+# Fully disable dwz step
+override_dh_dwz:
+	# Do nothing
 
 # Clean build artifacts and helper files
 override_dh_clean:
