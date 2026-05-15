@@ -92,6 +92,12 @@ jobs:
           sha256sum *.deb > SHA256SUMS-${{ matrix.distro }}.txt
           cat SHA256SUMS-${{ matrix.distro }}.txt
 
+      - name: Stage release assets in workspace
+        run: |
+          mkdir -p debian-release-assets
+          cp ../*.deb debian-release-assets/
+          cp ../SHA256SUMS-${{ matrix.distro }}.txt debian-release-assets/
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
@@ -106,7 +112,7 @@ jobs:
             sudo systemctl start drove.gateway
             ```
           files: |
-            ../*.deb
-            ../SHA256SUMS-${{ matrix.distro }}.txt
+            debian-release-assets/*.deb
+            debian-release-assets/SHA256SUMS-${{ matrix.distro }}.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

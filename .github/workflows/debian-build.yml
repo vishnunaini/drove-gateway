@@ -76,9 +76,12 @@ jobs:
       - name: Set snapshot version in changelog
         run: |
           BASE_VERSION=$(dpkg-parsechangelog -S Version | cut -d- -f1)
-          BRANCH_NAME="${{ github.head_ref || github.ref_name }}"
+          BRANCH_NAME="${{ github.head_ref }}"
+          if [ -z "${BRANCH_NAME}" ]; then
+            BRANCH_NAME="${{ github.ref_name }}"
+          fi
           BRANCH=$(echo "${BRANCH_NAME}" | sed 's|[/_]|.|g; s|[^a-zA-Z0-9.+~-]||g')
-          SHORT_SHA=$(git rev-parse --short HEAD)
+          SHORT_SHA=$(printf '%s' "${GITHUB_SHA}" | cut -c1-7)
           SNAPSHOT_VERSION="${BASE_VERSION}~snapshot+${BRANCH}.${SHORT_SHA}"
           export DEBEMAIL="github-actions@github.com"
           export DEBFULLNAME="GitHub Actions"
@@ -122,15 +125,21 @@ jobs:
           sha256sum *.deb > SHA256SUMS-${{ matrix.distro }}.txt
           cat SHA256SUMS-${{ matrix.distro }}.txt
 
+      - name: Stage artifacts in workspace
+        run: |
+          mkdir -p debian-artifacts
+          mkdir -p debian-artifacts/build-logs
+          cp ../*.deb debian-artifacts/
+          cp ../*.changes debian-artifacts/ 2>/dev/null || true
+          cp ../SHA256SUMS-${{ matrix.distro }}.txt debian-artifacts/
+          cp ../*.build debian-artifacts/build-logs/ 2>/dev/null || true
+
       - name: Upload Debian package artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: snapshot-debian-${{ matrix.distro }}-${{ github.sha }}
-          path: |
-            ../*.deb
-            ../*.changes
-            ../SHA256SUMS-${{ matrix.distro }}.txt
+          path: debian-artifacts/
           retention-days: 30
 
       - name: Upload build logs artifact
@@ -138,6 +147,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: snapshot-debian-${{ matrix.distro }}-build-logs-${{ github.sha }}
-          path: ../*.build
+          path: debian-artifacts/build-logs/
           retention-days: 7
+          if-no-files-found: ignore
 
