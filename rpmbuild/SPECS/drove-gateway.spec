@@ -36,7 +36,7 @@ export GOPROXY=https://proxy.golang.org,direct
 export GOTOOLCHAIN=local
 
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
-LDFLAGS="-X main.version=%{build_version} -X main.date=$(date '+%Y-%m-%dT%H:%M:%S')"
+LDFLAGS="-X main.version=%{build_version} -X main.date=$(date '+%%Y-%%m-%%dT%%H:%%M:%%S')"
 if [ "$COMMIT" != "unknown" ]; then \
     LDFLAGS="$LDFLAGS -X main.commit=$COMMIT"; \
 fi
