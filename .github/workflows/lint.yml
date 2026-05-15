@@ -47,7 +47,7 @@ jobs:
       - name: Check for security issues
         uses: securego/gosec@master
         with:
-          args: '-no-fail -fmt json -out gosec-report.json ./src/...'
+          args: '-no-fail -fmt json -out gosec-report.json ./...'
         continue-on-error: true
       
       - name: Upload gosec report

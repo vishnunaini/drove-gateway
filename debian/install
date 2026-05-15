@@ -8,5 +8,9 @@ nixy usr/bin/
 support/drove.gateway.service lib/systemd/system/
 
 # Configuration and templates
-src/nixy.toml etc/nixy/nixy.toml.example
-src/*.tmpl etc/nixy/
+config/nixy.toml etc/nixy/nixy.toml.example
+config/*.tmpl etc/nixy/
+
+# Examples (documentation)
+examples/*.tmpl usr/share/doc/drove-gateway/examples/
+examples/nixy.toml usr/share/doc/drove-gateway/examples/nixy.toml.example

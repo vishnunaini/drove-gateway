@@ -10,38 +10,24 @@ LDFLAGS := -X "main.version=$(VERSION)" -X "main.date=$(DATE)" -X "main.commit=$
 # Ensure proxy settings are passed to the build
 export http_proxy
 export https_proxy
+# Force module mode so -mod=mod is valid even when environment defaults to GOPATH mode.
+export GO111MODULE=on
+# Enable module downloads (override any GOPROXY=off from environment)
+export GOPROXY=https://proxy.golang.org,direct
 export GOTOOLCHAIN=local
 
 %:
-	dh $@ --buildsystem=golang --with=golang
+	dh $@
 
-# Override build step: compile the Go binary
-# go.mod lives in src/, cmd/nixy/ lives at the repo root
+# Override build step: compile the Go binary from root-level module
+# dh-sequence-golang will handle standard module detection, but we need custom LDFLAGS
 override_dh_auto_build:
-	cd src && go build -mod=mod -v -ldflags '$(LDFLAGS)' -o ../nixy ../cmd/nixy
+	go build -mod=mod -v -ldflags '$(LDFLAGS)' -o nixy .
 
-# Override install step: install binary, configs, and templates
+# Override install step: install binary only; let dh_install handle the rest via debian/install
 override_dh_auto_install:
-	# Install binary
 	mkdir -p debian/drove-gateway/usr/bin
 	cp nixy debian/drove-gateway/usr/bin/nixy
-	
-	# Install configuration files
-	mkdir -p debian/drove-gateway/etc/nixy
-	cp src/nixy.toml debian/drove-gateway/etc/nixy/nixy.toml.example
-	
-	# Install Nginx templates and configurations
-	find src -name "*.tmpl" -type f -exec cp {} debian/drove-gateway/etc/nixy/ \;
-	find src -name "*.conf" -type f ! -name "nixy_upstreams.conf" -exec cp {} debian/drove-gateway/etc/nixy/ \;
-	
-	# Install example templates from examples directory
-	mkdir -p debian/drove-gateway/usr/share/doc/drove-gateway/examples
-	cp examples/*.tmpl debian/drove-gateway/usr/share/doc/drove-gateway/examples/ || true
-	cp examples/nixy.toml debian/drove-gateway/usr/share/doc/drove-gateway/examples/nixy.toml.example || true
-	
-	# Install systemd service file from support directory
-	mkdir -p debian/drove-gateway/lib/systemd/system
-	cp support/drove.gateway.service debian/drove-gateway/lib/systemd/system/
 
 # Skip automatic tests (no tests defined)
 override_dh_auto_test:

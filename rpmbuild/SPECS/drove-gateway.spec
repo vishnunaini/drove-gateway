@@ -34,10 +34,11 @@ Features:
 %setup -q -n drove-gateway
 
 %build
-# go.mod lives in src/, cmd/ lives at the repo root
+# Go module now at repository root
+export GO111MODULE=on
+export GOPROXY=https://proxy.golang.org,direct
 export GOTOOLCHAIN=local
-cd src
-go build -mod=mod -v -ldflags="-X main.version=%{version} -X main.date=$(date '+%%Y-%%m-%%d %%H:%%M:%%S') -X main.commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" -o ../nixy ../cmd/nixy
+go build -mod=mod -v -ldflags="-X main.version=%{version} -X main.date=$(date '+%%Y-%%m-%%d %%H:%%M:%%S') -X main.commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" -o nixy .
 
 %install
 # Create directories
@@ -54,11 +55,11 @@ install -m 0755 nixy %{buildroot}%{_bindir}/nixy
 install -m 0644 support/drove.gateway.service %{buildroot}%{_unitdir}/
 
 # Install configuration files
-install -m 0644 src/nixy.toml %{buildroot}%{_sysconfdir}/nixy/nixy.toml.example
+install -m 0644 config/nixy.toml %{buildroot}%{_sysconfdir}/nixy/nixy.toml.example
 
 # Install templates
-install -m 0644 src/*.tmpl %{buildroot}%{_sysconfdir}/nixy/ 2>/dev/null || true
-install -m 0644 src/*.conf %{buildroot}%{_sysconfdir}/nixy/ 2>/dev/null || true
+install -m 0644 config/*.tmpl %{buildroot}%{_sysconfdir}/nixy/ 2>/dev/null || true
+install -m 0644 config/*.conf %{buildroot}%{_sysconfdir}/nixy/ 2>/dev/null || true
 
 # Install documentation and examples
 install -m 0644 README.md %{buildroot}%{_docdir}/%{name}/
