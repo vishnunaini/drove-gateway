@@ -20,9 +20,6 @@ jobs:
           - distro: ubuntu-24.04
             container: ubuntu:24.04
             os_label: Ubuntu 24.04 (Noble)
-          - distro: debian-12
-            container: debian:bookworm
-            os_label: Debian 12 (Bookworm)
           - distro: debian-13
             container: debian:trixie
             os_label: Debian 13 (Trixie)
@@ -59,6 +56,13 @@ jobs:
             exit 1
           fi
           apt-get install -y --no-install-recommends "${BUILD_DEPS_DEB}"
+
+      - name: Ensure Go 1.23 is in PATH
+        run: |
+          if [ -d /usr/lib/go-1.23/bin ]; then
+            echo "/usr/lib/go-1.23/bin found, adding to PATH"
+            echo "/usr/lib/go-1.23/bin" >> $GITHUB_PATH
+          fi
 
       - name: Configure Git
         run: git config --global --add safe.directory "$(pwd)"
