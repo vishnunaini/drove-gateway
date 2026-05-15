@@ -45,8 +45,10 @@ jobs:
               debhelper-compat \
               dh-sequence-golang \
               devscripts \
+              equivs \
               git \
               lintian \
+              perl \
               curl
 
             # Prefer a fixed Go 1.23 toolchain package; fallback to golang-any.
@@ -58,8 +60,10 @@ jobs:
               build-essential \
               debhelper-compat \
               devscripts \
+              equivs \
               git \
               lintian \
+              perl \
               curl
 
             # Keep Ubuntu aligned with Debian package intent when available.

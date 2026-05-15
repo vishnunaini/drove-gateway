@@ -41,14 +41,17 @@ jobs:
       - name: Install build dependencies
         run: |
           apt-get update
-          if [[ "${{ startsWith(matrix.distro, 'debian-') }}" == "true" ]]; then
+          if [ "${{ startsWith(matrix.distro, 'debian-') }}" = "true" ]; then
             apt-get install -y --no-install-recommends \
               build-essential \
               debhelper-compat \
               dh-sequence-golang \
               devscripts \
+              equivs \
               git \
+              libdistro-info-perl \
               lintian \
+              perl \
               curl
 
             # Prefer a fixed Go 1.23 toolchain package; fallback to golang-any.
@@ -60,8 +63,11 @@ jobs:
               build-essential \
               debhelper-compat \
               devscripts \
+              equivs \
               git \
+              libdistro-info-perl \
               lintian \
+              perl \
               curl
 
             # Keep Ubuntu aligned with Debian package intent when available.
@@ -85,14 +91,14 @@ jobs:
           SNAPSHOT_VERSION="${BASE_VERSION}~snapshot+${BRANCH}.${SHORT_SHA}"
           export DEBEMAIL="github-actions@github.com"
           export DEBFULLNAME="GitHub Actions"
-          dch --newversion "${SNAPSHOT_VERSION}" \
+            dch -b --newversion "${SNAPSHOT_VERSION}" \
               --distribution unstable \
               "Snapshot build for ${BRANCH_NAME} @ ${SHORT_SHA}"
           echo "SNAPSHOT_VERSION=${SNAPSHOT_VERSION}" >> "$GITHUB_ENV"
 
       - name: Build
         run: |
-          if [[ "${{ startsWith(matrix.distro, 'ubuntu-') }}" == "true" ]]; then
+          if [ "${{ startsWith(matrix.distro, 'ubuntu-') }}" = "true" ]; then
             # Ubuntu containers may not satisfy Debian-specific Build-Depends exactly.
             # Build with deps preinstalled and skip strict checkbuilddeps gate.
             dpkg-buildpackage -us -uc -b -d
