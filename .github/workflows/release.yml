@@ -8,8 +8,8 @@ on:
 jobs:
   release-deb:
     runs-on: ubuntu-latest
-    # Only publish milestone releases tagged from the master branch
-    if: github.event.base_ref == 'refs/heads/master'
+    # Run on manual trigger for the selected branch, or on milestone tags from master
+    if: github.event_name == 'workflow_dispatch' || github.event.base_ref == 'refs/heads/master'
     container: debian:bookworm
     permissions:
       contents: write
