@@ -1,0 +1,57 @@
+#!/bin/sh
+set -e
+
+# Post-installation script for drove-gateway
+
+case "$1" in
+    configure)
+        # Ensure nixy configuration directory exists with proper permissions
+        if [ ! -d /etc/nixy ]; then
+            mkdir -p /etc/nixy
+            chmod 755 /etc/nixy
+        fi
+        
+        # Install default configuration if it doesn't exist
+        if [ ! -f /etc/nixy/nixy.toml ]; then
+            if [ -f /etc/nixy/nixy.toml.example ]; then
+                cp /etc/nixy/nixy.toml.example /etc/nixy/nixy.toml
+                chmod 644 /etc/nixy/nixy.toml
+            fi
+        fi
+        
+        # Ensure templates are readable
+        if [ -d /etc/nixy ]; then
+            chmod 644 /etc/nixy/*.tmpl 2>/dev/null || true
+        fi
+        
+        # Migration from older nixy.service to drove.gateway.service
+        if [ -f /var/lib/drove-gateway/.nixy-was-enabled ]; then
+            echo "Migrating from nixy.service to drove.gateway.service..."
+            
+            # Disable the old nixy.service if present
+            if systemctl list-unit-files | grep -q "^nixy.service"; then
+                systemctl disable nixy.service 2>/dev/null || true
+            fi
+            
+            # Enable and start the new drove.gateway.service
+            systemctl enable drove.gateway.service
+            systemctl daemon-reload
+            systemctl start drove.gateway.service
+            
+            # Clean up migration marker
+            rm -f /var/lib/drove-gateway/.nixy-was-enabled
+            rmdir /var/lib/drove-gateway 2>/dev/null || true
+            
+            echo "Migration completed: Service is now running as drove.gateway.service"
+        fi
+        ;;
+    
+    abort-upgrade|abort-remove|abort-deconfigure)
+        # No action needed
+        ;;
+esac
+
+# Run debhelper-generated code
+#DEBHELPER#
+
+exit 0

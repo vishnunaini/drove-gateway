@@ -1,0 +1,68 @@
+name: RPM Build
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  build-rpm:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - el: el9
+            container: quay.io/ubi9/ubi:latest
+          - el: el10
+            container: quay.io/ubi10/ubi:latest
+    container: ${{ matrix.container }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          dnf install -y \
+            gcc \
+            git \
+            golang \
+            systemd-rpm-macros \
+            rpm-build \
+            rpmdevtools \
+            redhat-rpm-config
+
+      - name: Configure Git
+        run: git config --global --add safe.directory "$(pwd)"
+
+      - name: Prepare sources
+        run: |
+          rpmdev-setuptree
+          cp rpmbuild/SPECS/drove-gateway.spec ~/rpmbuild/SPECS/
+          # Tarball top-level dir must match %setup -n drove-gateway in spec
+          tar --exclude='.git' --exclude='.github' --exclude='rpmbuild' \
+              -czf ~/rpmbuild/SOURCES/drove-gateway-1.0.tar.gz \
+              --transform 's|^\./|drove-gateway/|' \
+              -C . .
+
+      - name: Build
+        run: rpmbuild -ba ~/rpmbuild/SPECS/drove-gateway.spec
+
+      - name: Verify
+        run: |
+          rpm -qi  ~/rpmbuild/RPMS/$(uname -m)/drove-gateway-*.rpm
+          rpm -pql ~/rpmbuild/RPMS/$(uname -m)/drove-gateway-*.rpm
+
+      - name: Copy artifacts to workspace
+        run: |
+          mkdir -p rpm-output
+          cp ~/rpmbuild/RPMS/$(uname -m)/*.rpm rpm-output/
+          cp ~/rpmbuild/SRPMS/*.src.rpm        rpm-output/
+
+      - name: Upload RPM artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: rpm-packages-${{ matrix.el }}
+          path: rpm-output/
+          retention-days: 30
+        if: always()

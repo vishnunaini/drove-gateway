@@ -1,0 +1,58 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ master, develop ]
+  pull_request:
+    branches: [ master, develop ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.23']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go-version }}
+      
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          working-directory: ./src
+          args: --timeout=5m --verbose
+      
+      - name: Run go fmt
+        run: |
+          cd src
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "Code formatting issues found:"
+            gofmt -d .
+            exit 1
+          fi
+          echo "Code formatting check passed"
+      
+      - name: Run go vet
+        run: |
+          cd src
+          go vet ./...
+      
+      - name: Check for security issues
+        uses: securego/gosec@master
+        with:
+          args: '-no-fail -fmt json -out gosec-report.json ./src/...'
+        continue-on-error: true
+      
+      - name: Upload gosec report
+        uses: actions/upload-artifact@v3
+        with:
+          name: gosec-report
+          path: gosec-report.json
+        if: always()

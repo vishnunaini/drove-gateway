@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  release-deb:
+    runs-on: ubuntu-latest
+    # Only publish milestone releases tagged from the master branch
+    if: github.event.base_ref == 'refs/heads/master'
+    container: debian:bookworm
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            debhelper-compat \
+            devscripts \
+            git \
+            golang-go \
+            lintian \
+            curl
+
+      - name: Configure Git
+        run: git config --global --add safe.directory "$(pwd)"
+
+      - name: Build
+        run: dpkg-buildpackage -us -uc -b
+
+      - name: Verify
+        run: |
+          dpkg -I ../*.deb
+          lintian -i ../*.deb || true
+
+      - name: Generate checksums
+        run: |
+          cd ..
+          sha256sum drove-gateway_*.deb drove-gateway_*.changes > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          body: |
+            ## Debian Package
+
+            ### Installation
+            ```bash
+            sudo apt-get install ./drove-gateway_*.deb
+            systemctl enable --now drove.gateway.service
+            ```
+          files: |
+            ../*.deb
+            ../SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

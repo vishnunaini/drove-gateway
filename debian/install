@@ -1,0 +1,12 @@
+# Debian install file - explicitly defines what gets installed where
+# Format: source destination
+
+# Binary
+nixy usr/bin/
+
+# Systemd service file from support directory
+support/drove.gateway.service lib/systemd/system/
+
+# Configuration and templates
+src/nixy.toml etc/nixy/nixy.toml.example
+src/*.tmpl etc/nixy/

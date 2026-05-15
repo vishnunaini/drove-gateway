@@ -1,0 +1,56 @@
+#!/usr/bin/make -f
+
+# Strip Debian revision (e.g. 1.0-1 -> 1.0) so binary version matches RPM
+VERSION := $(shell dpkg-parsechangelog -S Version | cut -d- -f1)
+DATE    := $(shell date +"%Y-%m-%d %H:%M:%S")
+COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+LDFLAGS := -X "main.version=$(VERSION)" -X "main.date=$(DATE)" -X "main.commit=$(COMMIT)"
+
+# Ensure proxy settings are passed to the build
+export http_proxy
+export https_proxy
+
+%:
+	dh $@
+
+# Override build step: compile the Go binary
+# go.mod lives in src/, cmd/nixy/ lives at the repo root
+override_dh_auto_build:
+	cd src && go mod tidy
+	cd src && go build -v -ldflags '$(LDFLAGS)' -o ../nixy ../cmd/nixy
+
+# Override install step: install binary, configs, and templates
+override_dh_auto_install:
+	# Install binary
+	mkdir -p debian/drove-gateway/usr/bin
+	cp nixy debian/drove-gateway/usr/bin/nixy
+	
+	# Install configuration files
+	mkdir -p debian/drove-gateway/etc/nixy
+	cp src/nixy.toml debian/drove-gateway/etc/nixy/nixy.toml.example
+	
+	# Install Nginx templates and configurations
+	find src -name "*.tmpl" -type f -exec cp {} debian/drove-gateway/etc/nixy/ \;
+	find src -name "*.conf" -type f ! -name "nixy_upstreams.conf" -exec cp {} debian/drove-gateway/etc/nixy/ \;
+	
+	# Install example templates from examples directory
+	mkdir -p debian/drove-gateway/usr/share/doc/drove-gateway/examples
+	cp examples/*.tmpl debian/drove-gateway/usr/share/doc/drove-gateway/examples/ || true
+	cp examples/nixy.toml debian/drove-gateway/usr/share/doc/drove-gateway/examples/nixy.toml.example || true
+	
+	# Install systemd service file from support directory
+	mkdir -p debian/drove-gateway/lib/systemd/system
+	cp support/drove.gateway.service debian/drove-gateway/lib/systemd/system/
+
+# Skip automatic tests (no tests defined)
+override_dh_auto_test:
+	# No automated tests to run
+
+# Install systemd service file
+override_dh_installsystemd:
+	dh_installsystemd --restart-after-upgrade
+
+# Strip binaries and create shlibs
+override_dh_strip:
+	dh_strip
