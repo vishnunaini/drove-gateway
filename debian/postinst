@@ -34,15 +34,24 @@ case "$1" in
         if [ -f /var/lib/drove-gateway/.nixy-was-enabled ]; then
             echo "Migrating from nixy.service to drove.gateway.service..."
 
+            # Remove any stale or conflicting /etc/systemd/system/nixy.service
+            if [ -e /etc/systemd/system/nixy.service ]; then
+                rm -f /etc/systemd/system/nixy.service
+            fi
+
             # Disable the old nixy.service if present
-            if [ -e /lib/systemd/system/nixy.service ] || [ -e /etc/systemd/system/nixy.service ]; then
+            if [ -e /lib/systemd/system/nixy.service ]; then
                 deb-systemd-helper disable nixy.service >/dev/null || true
                 deb-systemd-helper unmask nixy.service >/dev/null || true
             fi
 
-            # Enable and start the new drove.gateway.service using deb-systemd-helper
-            deb-systemd-helper enable drove.gateway.service >/dev/null || true
-            deb-systemd-helper start drove.gateway.service >/dev/null || true
+            # Ensure drove.gateway.service file exists before enabling
+            if [ -e /lib/systemd/system/drove.gateway.service ]; then
+                deb-systemd-helper enable drove.gateway.service >/dev/null || true
+                deb-systemd-helper start drove.gateway.service >/dev/null || true
+            else
+                echo "Warning: /lib/systemd/system/drove.gateway.service not found, skipping enable/start."
+            fi
 
             # Clean up migration marker
             rm -f /var/lib/drove-gateway/.nixy-was-enabled

@@ -117,21 +117,30 @@ mkdir -p /var/lib/drove-gateway
 # Migration from older nixy.service to drove.gateway.service
 if [ -f /var/lib/drove-gateway/.nixy-was-enabled ]; then
     echo "Migrating from nixy.service to drove.gateway.service..."
-    
+
+    # Remove any stale or conflicting /etc/systemd/system/nixy.service
+    if [ -e /etc/systemd/system/nixy.service ]; then
+        rm -f /etc/systemd/system/nixy.service
+    fi
+
     # Disable the old nixy.service if present
-    if systemctl list-unit-files | grep -q "^nixy.service"; then
+    if [ -e /usr/lib/systemd/system/nixy.service ]; then
         systemctl disable nixy.service 2>/dev/null || true
     fi
-    
-    # Enable and start the new drove.gateway.service
-    systemctl enable drove.gateway.service
-    systemctl daemon-reload
-    systemctl start drove.gateway.service
-    
+
+    # Ensure drove.gateway.service file exists before enabling
+    if [ -e /usr/lib/systemd/system/drove.gateway.service ]; then
+        systemctl enable drove.gateway.service
+        systemctl daemon-reload
+        systemctl start drove.gateway.service
+    else
+        echo "Warning: /usr/lib/systemd/system/drove.gateway.service not found, skipping enable/start."
+    fi
+
     # Clean up migration marker
     rm -f /var/lib/drove-gateway/.nixy-was-enabled
     rmdir /var/lib/drove-gateway 2>/dev/null || true
-    
+
     echo "Migration completed: Service is now running as drove.gateway.service"
 fi
 
