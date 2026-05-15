@@ -5,6 +5,13 @@ BASE_VERSION := $(shell dpkg-parsechangelog -S Version | cut -d- -f1)
 DATE         := $(shell date +"%Y-%m-%d %H:%M:%S")
 COMMIT       := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
+# Only set commit flag if known
+ifneq ($(COMMIT),unknown)
+	COMMIT_LDFLAG := -X "main.commit=$(COMMIT)"
+else
+	COMMIT_LDFLAG :=
+endif
+
 # Detect if building from a tag (release) or not (snapshot)
 IS_TAG := $(shell git describe --exact-match --tags $(COMMIT) 2>/dev/null | grep -q '^v' && echo 1 || echo 0)
 ifeq ($(IS_TAG),0)
@@ -16,7 +23,7 @@ else
   VERSION := $(BASE_VERSION)
 endif
 
-LDFLAGS := -X "main.version=$(VERSION)" -X "main.date=$(DATE)" -X "main.commit=$(COMMIT)"
+LDFLAGS := -X "main.version=$(VERSION)" -X "main.date=$(DATE)" $(COMMIT_LDFLAG)
 
 # Go module name - needed by dh-sequence-golang to avoid uninitialized variable warnings
 export DH_GOPKG=nixy
