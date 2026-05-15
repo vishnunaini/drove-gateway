@@ -21,6 +21,12 @@ LDFLAGS := -X "main.version=$(VERSION)" -X "main.date=$(DATE)" -X "main.commit=$
 # Go module name - needed by dh-sequence-golang to avoid uninitialized variable warnings
 export DH_GOPKG=nixy
 
+# Skip debugsource packages (no .ddebs)
+export DEB_BUILD_OPTIONS=noddebs
+
+# Disable dwz for Go binaries (avoids errors with compressed debug sections)
+export DH_DWZ_DISABLE=1
+
 # Ensure proxy settings are passed to the build
 export http_proxy
 export https_proxy
