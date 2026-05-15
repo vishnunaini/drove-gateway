@@ -16,11 +16,9 @@ case "$1" in
         fi
 
         # Migration: Check if old nixy.service was enabled and save state for postinst
-        if [ "$1" = "upgrade" ]; then
-            mkdir -p /var/lib/drove-gateway
-            if deb-systemd-helper debian-enabled nixy.service >/dev/null 2>&1; then
-                touch /var/lib/drove-gateway/.nixy-was-enabled
-            fi
+        mkdir -p /var/lib/drove-gateway
+        if systemctl is-enabled nixy.service >/dev/null 2>&1; then
+            touch /var/lib/drove-gateway/.nixy-was-enabled
         fi
     ;;
     abort-upgrade)
