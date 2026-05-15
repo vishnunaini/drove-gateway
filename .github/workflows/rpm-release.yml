@@ -14,9 +14,9 @@ jobs:
       matrix:
         include:
           - el: el9
-            container: quay.io/ubi9/ubi:latest
+            container: registry.access.redhat.com/ubi9/ubi:latest
           - el: el10
-            container: quay.io/ubi10/ubi:latest
+            container: registry.access.redhat.com/ubi10/ubi:latest
     container: ${{ matrix.container }}
     permissions:
       contents: write

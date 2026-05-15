@@ -1,14 +1,12 @@
-name: Debian Package Build
+name: Release
 
 on:
-  pull_request:
-    branches: [ main, master, develop ]
   push:
-    branches: [ main, master, develop ]
+    tags: [ 'v*' ]
   workflow_dispatch:
 
 jobs:
-  build-deb:
+  release-deb:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -73,20 +71,6 @@ jobs:
       - name: Configure Git
         run: git config --global --add safe.directory "$(pwd)"
 
-      - name: Set snapshot version in changelog
-        run: |
-          BASE_VERSION=$(dpkg-parsechangelog -S Version | cut -d- -f1)
-          BRANCH_NAME="${{ github.head_ref || github.ref_name }}"
-          BRANCH=$(echo "${BRANCH_NAME}" | sed 's|[/_]|.|g; s|[^a-zA-Z0-9.+~-]||g')
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          SNAPSHOT_VERSION="${BASE_VERSION}~snapshot+${BRANCH}.${SHORT_SHA}"
-          export DEBEMAIL="github-actions@github.com"
-          export DEBFULLNAME="GitHub Actions"
-          dch --newversion "${SNAPSHOT_VERSION}" \
-              --distribution unstable \
-              "Snapshot build for ${BRANCH_NAME} @ ${SHORT_SHA}"
-          echo "SNAPSHOT_VERSION=${SNAPSHOT_VERSION}" >> "$GITHUB_ENV"
-
       - name: Build
         run: |
           if [[ "${{ startsWith(matrix.distro, 'ubuntu-') }}" == "true" ]]; then
@@ -97,24 +81,10 @@ jobs:
             dpkg-buildpackage -us -uc -b
           fi
 
-      - name: Verify package contents
+      - name: Verify
         run: |
-          ls -lh ../*.deb || echo "No .deb files generated"
-
-          if ls ../*.deb 1> /dev/null 2>&1; then
-            echo "Package contents:"
-            dpkg -c ../*.deb | head -30
-          fi
-
-      - name: Verify package integrity
-        run: |
-          if ls ../*.deb 1> /dev/null 2>&1; then
-            echo "Package information:"
-            dpkg -I ../*.deb
-            echo
-            echo "Running lintian checks..."
-            lintian -i ../*.deb || true
-          fi
+          dpkg -I ../*.deb
+          lintian -i ../*.deb || true
 
       - name: Generate checksums
         run: |
@@ -122,22 +92,21 @@ jobs:
           sha256sum *.deb > SHA256SUMS-${{ matrix.distro }}.txt
           cat SHA256SUMS-${{ matrix.distro }}.txt
 
-      - name: Upload Debian package artifact
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: snapshot-debian-${{ matrix.distro }}-${{ github.sha }}
-          path: |
+          tag_name: ${{ github.ref_name }}
+          body: |
+            ## Debian Packages (${{ matrix.os_label }})
+
+            ### Installation
+            ```bash
+            sudo dpkg -i drove-gateway_*.deb
+            sudo systemctl enable drove.gateway
+            sudo systemctl start drove.gateway
+            ```
+          files: |
             ../*.deb
-            ../*.changes
             ../SHA256SUMS-${{ matrix.distro }}.txt
-          retention-days: 30
-
-      - name: Upload build logs artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: snapshot-debian-${{ matrix.distro }}-build-logs-${{ github.sha }}
-          path: ../*.build
-          retention-days: 7
-
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

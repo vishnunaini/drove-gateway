@@ -1,8 +1,10 @@
 name: RPM Build
 
 on:
+  pull_request:
+    branches: [ main, master, develop ]
   push:
-    tags: [ 'v*' ]
+    branches: [ main, master, develop ]
   workflow_dispatch:
 
 jobs:
@@ -12,14 +14,16 @@ jobs:
       matrix:
         include:
           - el: el9
-            container: quay.io/ubi9/ubi:latest
+            container: registry.access.redhat.com/ubi9/ubi:latest
           - el: el10
-            container: quay.io/ubi10/ubi:latest
+            container: registry.access.redhat.com/ubi10/ubi:latest
     container: ${{ matrix.container }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install build dependencies
         run: |
@@ -35,18 +39,27 @@ jobs:
       - name: Configure Git
         run: git config --global --add safe.directory "$(pwd)"
 
+      - name: Compute snapshot release string
+        run: |
+          BRANCH_NAME="${{ github.head_ref || github.ref_name }}"
+          BRANCH=$(echo "${BRANCH_NAME}" | sed 's|[/_]|.|g; s|[^a-zA-Z0-9.]||g')
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          SNAPSHOT_RELEASE="0.snapshot.${BRANCH}.${SHORT_SHA}"
+          echo "SNAPSHOT_RELEASE=${SNAPSHOT_RELEASE}" >> "$GITHUB_ENV"
+
       - name: Prepare sources
         run: |
+          BASE_VERSION=$(sed -n '1s/^drove-gateway (\([^)]*\)).*/\1/p' debian/changelog | cut -d- -f1)
           rpmdev-setuptree
           cp rpmbuild/SPECS/drove-gateway.spec ~/rpmbuild/SPECS/
           # Tarball top-level dir must match %setup -n drove-gateway in spec
           tar --exclude='.git' --exclude='.github' --exclude='rpmbuild' \
-              -czf ~/rpmbuild/SOURCES/drove-gateway-1.0.tar.gz \
+              -czf ~/rpmbuild/SOURCES/drove-gateway-${BASE_VERSION}.tar.gz \
               --transform 's|^\./|drove-gateway/|' \
               -C . .
 
       - name: Build
-        run: rpmbuild -ba ~/rpmbuild/SPECS/drove-gateway.spec
+        run: rpmbuild -ba -D "snapshot_release ${SNAPSHOT_RELEASE}" ~/rpmbuild/SPECS/drove-gateway.spec
 
       - name: Verify
         run: |
@@ -62,7 +75,7 @@ jobs:
       - name: Upload RPM artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rpm-packages-${{ matrix.el }}
+          name: snapshot-rpm-${{ matrix.el }}-${{ github.sha }}
           path: rpm-output/
           retention-days: 30
         if: always()
