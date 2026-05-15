@@ -11,18 +11,21 @@ jobs:
     strategy:
       matrix:
         include:
-          - distro: ubuntu-22.04
-            container: ubuntu:22.04
-            os_label: Ubuntu 22.04 (Jammy)
-          - distro: ubuntu-24.04
-            container: ubuntu:24.04
-            os_label: Ubuntu 24.04 (Noble)
-          - distro: debian-13
-            container: debian:trixie
-            os_label: Debian 13 (Trixie)
-          - distro: ubuntu-20.04
-            container: ubuntu:20.04
-            os_label: Ubuntu 20.04 (Focal)
+            - distro: ubuntu-22.04
+              container: ubuntu:22.04
+              os_label: Ubuntu 22.04 (Jammy)
+            - distro: ubuntu-24.04
+              container: ubuntu:24.04
+              os_label: Ubuntu 24.04 (Noble)
+            - distro: debian-13
+              container: debian:trixie
+              os_label: Debian 13 (Trixie)
+            - distro: debian-12
+              container: debian:bookworm
+              os_label: Debian 12 (Bookworm)
+            - distro: ubuntu-20.04
+              container: ubuntu:20.04
+              os_label: Ubuntu 20.04 (Focal)
     container: ${{ matrix.container }}
     permissions:
       contents: write
@@ -40,11 +43,15 @@ jobs:
       - name: Install build dependencies
         run: |
           export DEBIAN_FRONTEND=noninteractive
-            if [ "${{ matrix.distro }}" = "ubuntu-20.04" ]; then
-              apt-get update
-              apt-get install -y --no-install-recommends software-properties-common
-              add-apt-repository -y ppa:longsleep/golang-backports
-            fi
+          if [ "${{ matrix.distro }}" = "ubuntu-20.04" ]; then
+            apt-get update
+            apt-get install -y --no-install-recommends software-properties-common
+            add-apt-repository -y ppa:longsleep/golang-backports
+          fi
+          if [ "${{ matrix.distro }}" = "debian-12" ]; then
+            echo 'deb http://deb.debian.org/debian bookworm-backports main' > /etc/apt/sources.list.d/bookworm-backports.list
+            apt-get update
+          fi
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential \
