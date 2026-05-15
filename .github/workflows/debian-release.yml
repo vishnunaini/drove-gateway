@@ -51,8 +51,8 @@ jobs:
             perl
 
           # Install build dependencies from debian/control, including Go toolchain alternatives.
-          mk-build-deps --install --remove \
-            --tool "apt-get -y --no-install-recommends" \
+          mk-build-deps --install \
+            --tool "apt-get -y --no-install-recommends --fix-broken install" \
             debian/control
 
       - name: Configure Git
