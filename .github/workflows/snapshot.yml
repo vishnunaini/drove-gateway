@@ -81,16 +81,14 @@ jobs:
       - name: Configure Git
         run: git config --global --add safe.directory "$(pwd)"
 
-      - name: Set snapshot version in spec
+      - name: Compute snapshot release string
         run: |
-          # Read base version from debian/changelog as single source of truth
-          BASE_VERSION=$(grep -m1 '^drove-gateway' debian/changelog | grep -oP '\(\K[^)]+' | cut -d- -f1)
           # Sanitize branch name: replace '/' and '_' with '.', strip other invalid chars
           BRANCH=$(echo "${{ github.head_ref }}" | sed 's|[/_]|.|g; s|[^a-zA-Z0-9.]||g')
           SHORT_SHA=$(git rev-parse --short HEAD)
           # Release 0.snapshot.<branch>.<hash> sorts below the release build (Release: 1)
-          sed -i "s/^Version:.*/Version:        ${BASE_VERSION}/" rpmbuild/SPECS/drove-gateway.spec
-          sed -i "s/^Release:.*/Release:        0.snapshot.${BRANCH}.${SHORT_SHA}%{?dist}/" rpmbuild/SPECS/drove-gateway.spec
+          SNAPSHOT_RELEASE="0.snapshot.${BRANCH}.${SHORT_SHA}"
+          echo "SNAPSHOT_RELEASE=${SNAPSHOT_RELEASE}" >> $GITHUB_ENV
 
       - name: Prepare sources
         run: |
@@ -103,7 +101,7 @@ jobs:
               -C . .
 
       - name: Build
-        run: rpmbuild -ba ~/rpmbuild/SPECS/drove-gateway.spec
+        run: rpmbuild -ba -D "snapshot_release ${SNAPSHOT_RELEASE}" ~/rpmbuild/SPECS/drove-gateway.spec
 
       - name: Copy artifacts to workspace
         run: |

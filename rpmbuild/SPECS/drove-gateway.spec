@@ -1,6 +1,8 @@
 Name:           drove-gateway
 Version:        1.0
-Release:        1%{?dist}
+# Release field: default to 1 for releases, but can be overridden by workflows for snapshots
+# Workflows can pass -D snapshot_release="0.snapshot.branch.hash" at rpmbuild time
+Release:        %{?snapshot_release}%{!?snapshot_release:1}%{?dist}
 Summary:        Drove gateway daemon for Nginx/HAProxy configuration management
 License:        Apache-2.0
 URL:            https://github.com/phonepe/drove-gateway
@@ -38,7 +40,11 @@ Features:
 export GO111MODULE=on
 export GOPROXY=https://proxy.golang.org,direct
 export GOTOOLCHAIN=local
-go build -mod=mod -v -ldflags="-X main.version=%{version} -X main.date=$(date '+%%Y-%%m-%%d %%H:%%M:%%S') -X main.commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" -o nixy .
+
+# Determine version string: for snapshots, append Release field info to version
+%define build_version %{version}%{?snapshot_release:-%{snapshot_release}}%{!?snapshot_release:%{nil}}
+
+go build -mod=mod -v -ldflags="-X main.version=%{build_version} -X main.date=$(date '+%%Y-%%m-%%d %%H:%%M:%%S') -X main.commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" -o nixy .
 
 %install
 # Create directories

@@ -8,11 +8,33 @@ on:
 jobs:
   build-deb:
     runs-on: ubuntu-latest
-    container: debian:bookworm
+    strategy:
+      matrix:
+        include:
+          - distro: ubuntu-20.04
+            container: ubuntu:20.04
+            os_label: Ubuntu 20.04 (Focal)
+          - distro: ubuntu-22.04
+            container: ubuntu:22.04
+            os_label: Ubuntu 22.04 (Jammy)
+          - distro: ubuntu-24.04
+            container: ubuntu:24.04
+            os_label: Ubuntu 24.04 (Noble)
+          - distro: debian-12
+            container: debian:bookworm
+            os_label: Debian 12 (Bookworm)
+          - distro: debian-13
+            container: debian:trixie
+            os_label: Debian 13 (Trixie)
+    container: ${{ matrix.container }}
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install build dependencies
         run: |
@@ -23,25 +45,24 @@ jobs:
             devscripts \
             git \
             golang-go \
-            lintian
+            lintian \
+            curl
 
       - name: Configure Git
         run: git config --global --add safe.directory "$(pwd)"
 
       - name: Build
         run: dpkg-buildpackage -us -uc -b
-      
+
       - name: Verify package contents
         run: |
-          # List all generated packages
           ls -lh ../*.deb || echo "No .deb files generated"
-          
-          # Check package contents if available
+
           if ls ../*.deb 1> /dev/null 2>&1; then
             echo "Package contents:"
             dpkg -c ../*.deb | head -30
           fi
-      
+
       - name: Verify package integrity
         run: |
           if ls ../*.deb 1> /dev/null 2>&1; then
@@ -51,20 +72,60 @@ jobs:
             echo "Running lintian checks..."
             lintian -i ../*.deb || true
           fi
-      
-      - name: Upload Debian package
-        uses: actions/upload-artifact@v3
-        with:
-          name: debian-packages
-          path: ../*.deb
-          retention-days: 30
+
+      - name: Generate checksums
+        run: |
+          cd ..
+          sha256sum *.deb > SHA256SUMS-${{ matrix.distro }}.txt
+          cat SHA256SUMS-${{ matrix.distro }}.txt
+
+      - name: Upload Debian package artifact
         if: always()
-      
-      - name: Upload build logs
         uses: actions/upload-artifact@v3
         with:
-          name: debian-build-logs
+          name: debian-${{ matrix.distro }}-packages
+          path: |
+            ../*.deb
+            ../*.changes
+            ../SHA256SUMS-${{ matrix.distro }}.txt
+          retention-days: 30
+
+      - name: Upload build logs artifact
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: debian-${{ matrix.distro }}-build-logs
           path: ../*.build
           retention-days: 7
-        if: always()
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          body: |
+            ## Debian Packages (${{ matrix.os_label }})
+
+            Pre-built packages for ${{ matrix.os_label }}.
+
+            ### Installation
+            ```bash
+            sudo dpkg -i drove-gateway_*.deb
+            sudo systemctl enable drove.gateway
+            sudo systemctl start drove.gateway
+            ```
+
+            ### Configuration
+            Edit `/etc/nixy/nixy.toml` and restart the service.
+
+            ### Verification
+            ```bash
+            drove.gateway --version
+            systemctl status drove.gateway
+            ```
+          files: |
+            ../*.deb
+            ../SHA256SUMS-${{ matrix.distro }}.txt
 
