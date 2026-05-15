@@ -47,8 +47,8 @@ go build -mod=mod -v -ldflags="$LDFLAGS" -o nixy .
 mkdir -p %{buildroot}%{_bindir}
 mkdir -p %{buildroot}%{_sysconfdir}/nixy
 mkdir -p %{buildroot}%{_unitdir}
-mkdir -p %{buildroot}%{_docdir}/drove-gateway
-mkdir -p %{buildroot}%{_docdir}/drove-gateway/examples
+mkdir -p %{buildroot}%{_docdir}/%{name}
+mkdir -p %{buildroot}%{_docdir}/%{name}/examples
 
 # Install binary
 install -m 0755 nixy %{buildroot}%{_bindir}/nixy
