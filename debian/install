@@ -9,7 +9,7 @@ support/drove.gateway.service lib/systemd/system/
 
 # Configuration and templates
 config/nixy.toml etc/nixy/nixy.toml.example
-config/*.tmpl etc/nixy/
+config/nginx.tmpl etc/nixy/nginx.tmpl.dpkg-new
 
 # Examples (documentation)
 examples/*.tmpl usr/share/doc/drove-gateway/examples/

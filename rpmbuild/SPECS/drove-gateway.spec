@@ -63,8 +63,17 @@ install -m 0644 support/drove.gateway.service %{buildroot}%{_unitdir}/
 # Install configuration files
 install -m 0644 config/nixy.toml %{buildroot}%{_sysconfdir}/nixy/nixy.toml.example
 
-# Install templates
-install -m 0644 config/*.tmpl %{buildroot}%{_sysconfdir}/nixy/ 2>/dev/null || true
+for tmpl in config/*.tmpl; do
+    name=$(basename "$tmpl")
+    if [ "$name" = "nginx.tmpl" ]; then
+        # Only install nginx.tmpl if not present
+        if [ ! -f "%{buildroot}%{_sysconfdir}/nixy/nginx.tmpl" ]; then
+            install -m 0644 "$tmpl" "%{buildroot}%{_sysconfdir}/nixy/nginx.tmpl"
+        fi
+    else
+        install -m 0644 "$tmpl" "%{buildroot}%{_sysconfdir}/nixy/"
+    fi
+done
 install -m 0644 config/*.conf %{buildroot}%{_sysconfdir}/nixy/ 2>/dev/null || true
 
 # Install documentation and examples
@@ -89,9 +98,17 @@ if [ ! -f %{_sysconfdir}/nixy/nixy.toml ]; then
     fi
 fi
 
-# Ensure templates are readable
+# Ensure templates are readable, but do not overwrite nginx.tmpl if already present
 if [ -d %{_sysconfdir}/nixy ]; then
-    chmod 644 %{_sysconfdir}/nixy/*.tmpl 2>/dev/null || true
+    for tmpl in %{_sysconfdir}/nixy/*.tmpl; do
+        [ -e "$tmpl" ] || continue
+        name=$(basename "$tmpl")
+        if [ "$name" = "nginx.tmpl" ] && [ -f "%{_sysconfdir}/nixy/nginx.tmpl" ]; then
+            # Do not overwrite existing nginx.tmpl
+            continue
+        fi
+        chmod 644 "$tmpl" 2>/dev/null || true
+    done
 fi
 
 # Create state directory for migrations

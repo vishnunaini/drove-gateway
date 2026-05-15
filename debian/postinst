@@ -1,17 +1,13 @@
 #!/bin/sh
 set -e
 
-# Post-installation script for drove-gateway
-
 case "$1" in
     configure)
-        # Ensure nixy configuration directory exists with proper permissions
         if [ ! -d /etc/nixy ]; then
             mkdir -p /etc/nixy
             chmod 755 /etc/nixy
         fi
         
-        # Install default configuration if it doesn't exist
         if [ ! -f /etc/nixy/nixy.toml ]; then
             if [ -f /etc/nixy/nixy.toml.example ]; then
                 cp /etc/nixy/nixy.toml.example /etc/nixy/nixy.toml
@@ -19,9 +15,19 @@ case "$1" in
             fi
         fi
         
-        # Ensure templates are readable
         if [ -d /etc/nixy ]; then
-            chmod 644 /etc/nixy/*.tmpl 2>/dev/null || true
+            # Symlink /etc/nixy/examples to /usr/share/nixy-templates
+            if [ ! -L /etc/nixy/examples ]; then
+                rm -rf /etc/nixy/examples
+                ln -s /usr/share/nixy-templates /etc/nixy/examples
+            fi
+            # Only install nginx.tmpl if not present, using .dpkg-new from install
+            src_nginx="/etc/nixy/nginx.tmpl.dpkg-new"
+            dest_nginx="/etc/nixy/nginx.tmpl"
+            if [ -f "$src_nginx" ] && [ ! -f "$dest_nginx" ]; then
+                mv "$src_nginx" "$dest_nginx"
+                chmod 644 "$dest_nginx" 2>/dev/null || true
+            fi
         fi
         
         # Migration from older nixy.service to drove.gateway.service
