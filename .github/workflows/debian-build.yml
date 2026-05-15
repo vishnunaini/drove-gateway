@@ -35,6 +35,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Clean build tree
+        run: |
+          dh clean || true
+
       - name: Install build dependencies
         run: |
           export DEBIAN_FRONTEND=noninteractive

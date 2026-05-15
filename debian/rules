@@ -60,3 +60,8 @@ override_dh_installsystemd:
 # Strip binaries and create shlibs
 override_dh_strip:
 	dh_strip
+
+# Clean build artifacts and helper files
+override_dh_clean:
+	dh_clean
+	rm -rf .gopath nixy nixy.exe nixy.test obj-* debian/drove-gateway/usr/bin/nixy
