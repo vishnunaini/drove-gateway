@@ -13,9 +13,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - distro: ubuntu-20.04
-            container: ubuntu:20.04
-            os_label: Ubuntu 20.04 (Focal)
           - distro: ubuntu-22.04
             container: ubuntu:22.04
             os_label: Ubuntu 22.04 (Jammy)
@@ -25,6 +22,9 @@ jobs:
           - distro: debian-13
             container: debian:trixie
             os_label: Debian 13 (Trixie)
+          - distro: ubuntu-20.04
+            container: ubuntu:20.04
+            os_label: Ubuntu 20.04 (Focal)
     container: ${{ matrix.container }}
     permissions:
       contents: write

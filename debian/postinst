@@ -27,21 +27,21 @@ case "$1" in
         # Migration from older nixy.service to drove.gateway.service
         if [ -f /var/lib/drove-gateway/.nixy-was-enabled ]; then
             echo "Migrating from nixy.service to drove.gateway.service..."
-            
+
             # Disable the old nixy.service if present
-            if systemctl list-unit-files | grep -q "^nixy.service"; then
-                systemctl disable nixy.service 2>/dev/null || true
+            if [ -e /lib/systemd/system/nixy.service ] || [ -e /etc/systemd/system/nixy.service ]; then
+                deb-systemd-helper disable nixy.service >/dev/null || true
+                deb-systemd-helper unmask nixy.service >/dev/null || true
             fi
-            
-            # Enable and start the new drove.gateway.service
-            systemctl enable drove.gateway.service
-            systemctl daemon-reload
-            systemctl start drove.gateway.service
-            
+
+            # Enable and start the new drove.gateway.service using deb-systemd-helper
+            deb-systemd-helper enable drove.gateway.service >/dev/null || true
+            deb-systemd-helper start drove.gateway.service >/dev/null || true
+
             # Clean up migration marker
             rm -f /var/lib/drove-gateway/.nixy-was-enabled
             rmdir /var/lib/drove-gateway 2>/dev/null || true
-            
+
             echo "Migration completed: Service is now running as drove.gateway.service"
         fi
         ;;
