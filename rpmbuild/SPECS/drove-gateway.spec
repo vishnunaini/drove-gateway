@@ -35,22 +35,20 @@ export GO111MODULE=on
 export GOPROXY=https://proxy.golang.org,direct
 export GOTOOLCHAIN=local
 
-{ \
-    COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown); \
-    LDFLAGS="-X main.version=%{build_version} -X main.date=$(date '+%Y-%m-%dT%H:%M:%S')"; \
-    if [ "$COMMIT" != "unknown" ]; then \
-        LDFLAGS="$LDFLAGS -X main.commit=$COMMIT"; \
-    fi; \
-    go build -mod=mod -v -ldflags="$LDFLAGS" -o nixy .; \
-}
+COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS="-X main.version=%{build_version} -X main.date=$(date '+%Y-%m-%dT%H:%M:%S')"
+if [ "$COMMIT" != "unknown" ]; then \
+    LDFLAGS="$LDFLAGS -X main.commit=$COMMIT"; \
+fi
+go build -mod=mod -v -ldflags="$LDFLAGS" -o nixy .
 
 %install
 # Create directories
 mkdir -p %{buildroot}%{_bindir}
 mkdir -p %{buildroot}%{_sysconfdir}/nixy
 mkdir -p %{buildroot}%{_unitdir}
-mkdir -p %{buildroot}%{_docdir}/%{name}
-mkdir -p %{buildroot}%{_docdir}/%{name}/examples
+mkdir -p %{buildroot}%{_docdir}/drove-gateway
+mkdir -p %{buildroot}%{_docdir}/drove-gateway/examples
 
 # Install binary
 install -m 0755 nixy %{buildroot}%{_bindir}/nixy
