@@ -40,41 +40,22 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          if [ "${{ startsWith(matrix.distro, 'debian-') }}" = "true" ]; then
-            apt-get install -y --no-install-recommends \
-              build-essential \
-              debhelper-compat \
-              dh-sequence-golang \
-              devscripts \
-              equivs \
-              git \
-              libdistro-info-perl \
-              lintian \
-              perl \
-              curl
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            curl \
+            devscripts \
+            equivs \
+            git \
+            libdistro-info-perl \
+            lintian \
+            perl
 
-            # Prefer a fixed Go 1.23 toolchain package; fallback to golang-any.
-            if ! apt-get install -y --no-install-recommends golang-1.23-go; then
-              apt-get install -y --no-install-recommends golang-any
-            fi
-          else
-            apt-get install -y --no-install-recommends \
-              build-essential \
-              debhelper-compat \
-              devscripts \
-              equivs \
-              git \
-              libdistro-info-perl \
-              lintian \
-              perl \
-              curl
-
-            # Keep Ubuntu aligned with Debian package intent when available.
-            if ! apt-get install -y --no-install-recommends golang-1.23-go; then
-              apt-get install -y --no-install-recommends golang-any || apt-get install -y --no-install-recommends golang-go
-            fi
-          fi
+          # Install build dependencies from debian/control, including Go toolchain alternatives.
+          mk-build-deps --install --remove \
+            --tool "apt-get -y --no-install-recommends" \
+            debian/control
 
       - name: Configure Git
         run: git config --global --add safe.directory "$(pwd)"
