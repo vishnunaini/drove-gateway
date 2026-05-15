@@ -26,12 +26,11 @@ jobs:
         uses: golangci/golangci-lint-action@v3
         with:
           version: latest
-          working-directory: ./src
+          working-directory: .
           args: --timeout=5m --verbose
       
       - name: Run go fmt
         run: |
-          cd src
           if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
             echo "Code formatting issues found:"
             gofmt -d .
@@ -41,7 +40,6 @@ jobs:
       
       - name: Run go vet
         run: |
-          cd src
           go vet ./...
       
       - name: Check for security issues

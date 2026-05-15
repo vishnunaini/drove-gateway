@@ -26,7 +26,6 @@ jobs:
       
       - name: Check for vulnerable dependencies
         run: |
-          cd src
           go list -json -m all | go run github.com/sonatype-nexus-community/nancy@latest sleuth
         continue-on-error: true
       

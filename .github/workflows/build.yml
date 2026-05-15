@@ -34,7 +34,6 @@ jobs:
       
       - name: Download dependencies
         run: |
-          cd src
           go mod download
           go mod verify
       
@@ -47,10 +46,9 @@ jobs:
 
       - name: Build binary
         run: |
-          cd src
           go build -v \
             -ldflags="-X main.version=${{ steps.version.outputs.version }} -X main.commit=${{ github.sha }}" \
-            -o ../nixy ../cmd/nixy
+            -o nixy .
       
       - name: Verify binary
         run: |
