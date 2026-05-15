@@ -144,6 +144,9 @@ fi
 %files
 %doc %{_docdir}/%{name}/README.md
 %docdir %{_docdir}/%{name}/examples
+%doc %{_docdir}/%{name}/examples/haproxy.tmpl
+%doc %{_docdir}/%{name}/examples/nginx.tmpl
+%doc %{_docdir}/%{name}/examples/nixy.toml.example
 
 %{_bindir}/nixy
 %{_unitdir}/drove.gateway.service

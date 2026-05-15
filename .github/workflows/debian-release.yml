@@ -52,7 +52,12 @@ jobs:
 
           # Build the build-deps package from debian/control, then install it explicitly.
           mk-build-deps --build-dep debian/control
-          apt install -y ./*-build-deps_*.deb
+          BUILD_DEPS_DEB=$(find . .. -maxdepth 1 -type f -name '*-build-deps_*.deb' | head -n1)
+          if [ -z "${BUILD_DEPS_DEB}" ]; then
+            echo "No *-build-deps_*.deb package found after mk-build-deps"
+            exit 1
+          fi
+          apt-get install -y --no-install-recommends "${BUILD_DEPS_DEB}"
 
       - name: Configure Git
         run: git config --global --add safe.directory "$(pwd)"
