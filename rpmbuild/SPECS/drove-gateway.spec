@@ -35,12 +35,14 @@ export GOTOOLCHAIN=local
 # Determine version string: for snapshots, append Release field info to version
 %define build_version %{version}%{?snapshot_release:-%{snapshot_release}}%{!?snapshot_release:%{nil}}
 
-COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
-LDFLAGS="-X main.version=%{build_version} -X main.date=$(date '+%Y-%m-%dT%H:%M:%S')"
-if [ "$COMMIT" != "unknown" ]; then
-    LDFLAGS="$LDFLAGS -X main.commit=$COMMIT"
-fi
-go build -mod=mod -v -ldflags="$LDFLAGS" -o nixy .
+{ \
+    COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown); \
+    LDFLAGS="-X main.version=%{build_version} -X main.date=$(date '+%Y-%m-%dT%H:%M:%S')"; \
+    if [ "$COMMIT" != "unknown" ]; then \
+        LDFLAGS="$LDFLAGS -X main.commit=$COMMIT"; \
+    fi; \
+    go build -mod=mod -v -ldflags="$LDFLAGS" -o nixy .; \
+}
 
 %install
 # Create directories
