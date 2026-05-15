@@ -5,20 +5,20 @@ case "$1" in
     install|upgrade)
         # Stop the service if it is running to ensure a clean binary replacement
         if [ -d /run/systemd/system ]; then
-            # Stop by primary service name
-            if systemctl is-active --quiet drove.gateway.service 2>/dev/null; then
-                systemctl stop drove.gateway.service || true
+            # Stop by primary service name using deb-systemd-helper
+            if deb-systemd-helper debian-installed drove.gateway.service >/dev/null 2>&1; then
+                deb-systemd-helper stop drove.gateway.service || true
             fi
             # Stop by alias as fallback
-            if systemctl is-active --quiet nixy.service 2>/dev/null; then
-                systemctl stop nixy.service || true
+            if deb-systemd-helper debian-installed nixy.service >/dev/null 2>&1; then
+                deb-systemd-helper stop nixy.service || true
             fi
         fi
-        
+
         # Migration: Check if old nixy.service was enabled and save state for postinst
         if [ "$1" = "upgrade" ]; then
             mkdir -p /var/lib/drove-gateway
-            if systemctl is-enabled nixy.service 2>/dev/null; then
+            if deb-systemd-helper debian-enabled nixy.service >/dev/null 2>&1; then
                 touch /var/lib/drove-gateway/.nixy-was-enabled
             fi
         fi

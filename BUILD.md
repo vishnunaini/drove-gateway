@@ -21,8 +21,8 @@ sudo apt-get install -y \
 ```
 
 ### Build (Official Debian Method)
-
-The official Debian build tool is `dpkg-buildpackage`:
+  debhelper-compat \
+  golang-go \
 
 ```bash
 # Build binary package only (faster)
@@ -34,9 +34,15 @@ dpkg-buildpackage -us -uc
 # Build using helper script (wrapper around dpkg-buildpackage)
 ./scripts/debbuild.sh        # Binary only (default)
 ./scripts/debbuild.sh -s     # Source package
-./scripts/debbuild.sh -b -A  # All architecture-independent packages
 ```
 
+### Go Version
+Go 1.23 or newer is required. On Ubuntu 20.04 (focal), add the longsleep/golang-backports PPA:
+```bash
+sudo apt-get install -y software-properties-common
+sudo add-apt-repository ppa:longsleep/golang-backports
+sudo apt-get update
+sudo apt-get install -y golang-go
 ### Output
 - Binary package: `../drove-gateway_*.deb`
 - Source package: `../drove-gateway_*.dsc` (if -s used)
@@ -54,6 +60,21 @@ sudo apt-get install -f  # Install any missing dependencies
 # Enable and start service
 sudo systemctl enable drove.gateway.service
 sudo systemctl start drove.gateway.service
+### Installation
+```bash
+# Install and automatically resolve dependencies
+sudo apt-get install ./drove-gateway_*.deb
+
+# Or manual installation
+sudo dpkg -i drove-gateway_*.deb
+sudo apt-get install -f  # Install any missing dependencies
+
+# Service management is handled by deb-systemd-helper in maintainer scripts.
+# To manually check or control the service:
+sudo systemctl status drove.gateway.service
+sudo systemctl start drove.gateway.service
+sudo systemctl enable drove.gateway.service
+```
 
 # Verify installation
 sudo systemctl status drove.gateway.service
@@ -70,6 +91,23 @@ dpkg -I drove-gateway_*.deb
 # Run Debian linting checks
 lintian drove-gateway_*.deb
 ```
+### RPM Build Workflow
+**Trigger**: Push to `main`, Tags matching `v*`, Manual trigger
+**Workflow**: `.github/workflows/rpm-build.yml`
+
+Builds RPM packages in UBI9/UBI10 container and uploads artifacts.
+
+### Debian Release Workflow
+**Trigger**: Git tags matching `v*`
+**Workflow**: `.github/workflows/debian-release.yml`
+
+### RPM Release Workflow
+**Trigger**: Git tags matching `v*`
+**Workflow**: `.github/workflows/rpm-release.yml`
+
+Creates GitHub releases with built packages and checksums using official tools:
+- Debian: `dpkg-buildpackage`
+- RPM: `rpmbuild`
 
 ## Building RPM Packages
 
@@ -96,10 +134,13 @@ cp rpmbuild/SPECS/drove-gateway.spec ~/rpmbuild/SPECS/
 
 # Create source tarball
 tar --exclude='.git' --exclude='.github' --exclude='rpmbuild' \
-    -czf ~/rpmbuild/SOURCES/drove-gateway-1.0.tar.gz .
+**Error**: `go: cannot find GOROOT`
+- Set Go path: `export PATH=$PATH:/usr/local/go/bin`
+- On Ubuntu 20.04, ensure you have the longsleep/golang-backports PPA and Go >= 1.23
 
 # Build package
-rpmbuild -ba ~/rpmbuild/SPECS/drove-gateway.spec
+**Error**: `systemd headers not found`
+- Install systemd-devel: `sudo dnf install systemd-devel`
 ```
 
 #### Option 2: Using provided script (if available)
@@ -119,10 +160,12 @@ sudo systemctl enable drove.gateway.service
 sudo systemctl start drove.gateway.service
 ```
 
-## Building in Containers
+## Notes
 
-### Debian Package in Container (Official Method)
-```bash
+- Both packages use the same binary and configuration files
+- Systemd service files are standardized across both package formats
+- Configuration migration is handled automatically during package upgrades using deb-systemd-helper (not systemctl)
+- Packages can coexist with older `nixy` installations and provide automatic migration
 docker run --rm -v $(pwd):/work -w /work debian:bookworm bash -c '
   apt-get update
   apt-get install -y build-essential debhelper-compat devscripts golang-go git

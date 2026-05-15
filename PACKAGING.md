@@ -27,11 +27,10 @@ drove-gateway/
 │   └── ...
 │
 ├── .github/workflows/        # CI/CD workflows
-│   ├── build.yml            # Go build and test
-│   ├── debian-build.yml     # Debian package build
-│   ├── rpm-build.yml        # RPM package build (UBI9)
-│   ├── release.yml          # Debian release (GitHub)
-│   ├── rpm-release.yml      # RPM release (GitHub)
+│   ├── debian-build.yml     # Debian package build (matrix, gated)
+│   ├── debian-release.yml   # Debian release (GitHub, tags)
+│   ├── rpm-build.yml        # RPM package build (EL9/EL10, gated)
+│   ├── rpm-release.yml      # RPM release (GitHub, tags)
 │   ├── docker-build.yml     # Docker image build
 │   ├── lint.yml             # Code quality checks
 │   └── security.yml         # Security scanning
@@ -53,19 +52,19 @@ drove-gateway/
 ### Debian Package
 - **Format**: .deb (Debian binary)
 - **Build System**: debhelper (via official `dpkg-buildpackage`)
-- **Compatibility**: Debian 12+, Ubuntu 22.04+
+- **Compatibility**: Debian 12+, Debian 13, Ubuntu 20.04/22.04/24.04
 - **Build File**: `debian/rules`
 - **Control File**: `debian/control`
-- **Go Version Required**: >= 1.23
+- **Go Version Required**: >= 1.23 (from longsleep/golang-backports PPA for Ubuntu 20.04)
 - **Official Tool**: `dpkg-buildpackage` (standard Debian packaging tool)
 
 ### RPM Package
 - **Format**: .rpm (Red Hat Package Manager)
 - **Build System**: rpmbuild
-- **Compatibility**: RHEL 9, CentOS 9, AlmaLinux 9, Rocky Linux 9
+- **Compatibility**: RHEL 9/10, CentOS 9, AlmaLinux 9, Rocky Linux 9, Oracle Linux 9
 - **Spec File**: `rpmbuild/SPECS/drove-gateway.spec`
 - **Go Version Required**: >= 1.23
-- **Container Image**: quay.io/ubi9/ubi (UBI9 for compatibility)
+- **Container Image**: quay.io/ubi9/ubi (UBI9/UBI10 for compatibility)
 
 ## Installation Files
 
@@ -117,9 +116,9 @@ Features:
 
 ### Migration from `nixy.service`
 When upgrading from older packages:
-1. `preinst` detects if `nixy.service` was enabled
+1. `preinst` detects if `nixy.service` was enabled (using deb-systemd-helper)
 2. Saves state in `/var/lib/drove-gateway/.nixy-was-enabled`
-3. `postinst` migrates enablement to `drove.gateway.service`
+3. `postinst` migrates enablement to `drove.gateway.service` (using deb-systemd-helper)
 4. Service starts automatically with new name
 
 ## Version Management
@@ -163,17 +162,13 @@ When upgrading from older packages:
 # Recommended: Use official dpkg-buildpackage directly
 dpkg-buildpackage -us -uc -b          # Binary only (faster)
 dpkg-buildpackage -us -uc             # Source and binary
-
-# Or use convenience script (wrapper around dpkg-buildpackage)
-./scripts/debbuild.sh [OPTIONS]       # Binary only (default)
-./scripts/debbuild.sh -s              # Source package
-./scripts/debbuild.sh -b -A           # All arch-independent packages
 ```
 
 ### Local RPM Build
 ```bash
+# With helper script (if present):
 ./scripts/rpmbuild.sh [VERSION]
-# or
+# Or manual:
 rpmdev-setuptree
 rpmbuild -ba rpmbuild/SPECS/drove-gateway.spec
 ```
@@ -182,14 +177,15 @@ rpmbuild -ba rpmbuild/SPECS/drove-gateway.spec
 
 **Debian in Container (Official Method)**:
 ```bash
-docker run --rm -v $(pwd):/work -w /work debian:bookworm \
+# Example for Debian 13 (trixie):
+docker run --rm -v $(pwd):/work -w /work debian:trixie \
   bash -c 'apt-get update && apt-get install -y build-essential debhelper-compat devscripts golang-go git && dpkg-buildpackage -us -uc -b'
 ```
 
 **RPM in Container**:
 ```bash
 docker run --rm -v $(pwd):/work -w /work quay.io/ubi9/ubi:latest \
-  bash -c 'dnf install -y rpm-build golang && ./scripts/rpmbuild.sh'
+  bash -c 'dnf install -y rpm-build golang && rpmbuild -ba rpmbuild/SPECS/drove-gateway.spec'
 ```
 
 ## File Permissions
@@ -222,6 +218,6 @@ Both formats require:
 
 - Both Debian and RPM packages produce identical binaries and configuration
 - Version strings include commit hash and build date
-- Packages handle service migration automatically
+- Packages handle service migration automatically (using deb-systemd-helper, not systemctl)
 - Configuration is preserved during package upgrades
 - Uninstall removes config only on `purge` (Debian) or uninstall (RPM)

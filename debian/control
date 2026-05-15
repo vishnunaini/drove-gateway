@@ -18,15 +18,3 @@ Depends: ${shlibs:Depends},
 Recommends: nginx | haproxy
 Suggests: nginx-plus
 Description: Drove gateway daemon for Nginx/HAProxy configuration management
- Drove Gateway (Nixy) is a daemon that automatically configures Nginx or HAProxy
- for services deployed on the Drove container orchestrator. It monitors the Drove
- event stream and dynamically updates proxy configurations in real-time.
- .
- Features:
-  - Real-time configuration updates via Drove's event stream
-  - Support for Nginx (OSS and Plus) with full reloads and dynamic upstream updates
-  - Support for HAProxy with configuration reloads and runtime API updates
-  - Automatic service discovery and health status tracking
-  - Multi-controller Drove cluster support with automatic leader detection
-  - Header-based routing support (HAProxy)
-  - Single statically-linked binary with no runtime dependencies except Nginx/HAProxy

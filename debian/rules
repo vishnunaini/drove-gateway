@@ -22,8 +22,8 @@ LDFLAGS := -X "main.version=$(VERSION)" -X "main.date=$(DATE)" -X "main.commit=$
 export DH_GOPKG=nixy
 
 
-# Skip debugsource packages (no .ddebs) and completely disable debug builds
-export DEB_BUILD_OPTIONS=nostrip noddebs
+# Skip debugsource packages (no .ddebs)
+export DEB_BUILD_OPTIONS=noddebs
 
 # Enable all hardening, including RELRO and PIE
 export DEB_BUILD_MAINT_OPTIONS=hardening=+all
@@ -64,10 +64,6 @@ override_dh_auto_test:
 # Install systemd service file
 override_dh_installsystemd:
 	dh_installsystemd --restart-after-upgrade
-
-# Strip binaries and create shlibs (do nothing to fully disable debug symbol generation)
-override_dh_strip:
-	# Do nothing
 
 # Fully disable dwz step
 override_dh_dwz:
