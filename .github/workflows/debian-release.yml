@@ -100,7 +100,8 @@ jobs:
       - name: Update changelog version from tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          sed -i "s/^drove-gateway ([^)]*)/drove-gateway (${VERSION})/" debian/changelog
+          OS_SUFFIX=$(echo "${{ matrix.distro }}" | sed 's/-//')
+          sed -i "s/^drove-gateway ([^)]*)/drove-gateway (${VERSION}+${OS_SUFFIX})/" debian/changelog
 
       - name: Build
         run: |

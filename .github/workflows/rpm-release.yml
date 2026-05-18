@@ -8,7 +8,6 @@ on:
 jobs:
   create-release:
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event.base_ref == 'refs/heads/master'
     permissions:
       contents: write
     steps:
@@ -33,7 +32,6 @@ jobs:
     container: ${{ matrix.container }}
     permissions:
       contents: write
-    if: github.event_name == 'workflow_dispatch' || github.event.base_ref == 'refs/heads/master'
 
     steps:
       - name: Checkout code
