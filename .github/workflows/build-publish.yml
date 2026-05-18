@@ -78,17 +78,17 @@ jobs:
           TAGS="${VERSION_TAG}"
           BODY=$(printf '%s\n' \
             'Container Image' \
-            '\`\`\`bash' \
+            '```bash' \
             "docker pull ${VERSION_TAG}" \
-            '\`\`\`')
+            '```')
         else
           TAGS="${VERSION_TAG},${IMAGE}:latest"
           BODY=$(printf '%s\n' \
             'Container Image' \
-            '\`\`\`bash' \
+            '```bash' \
             "docker pull ${VERSION_TAG}" \
             "docker pull ${IMAGE}:latest" \
-            '\`\`\`')
+            '```')
         fi
 
         echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
