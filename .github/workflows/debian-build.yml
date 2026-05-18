@@ -19,6 +19,9 @@ jobs:
             - distro: ubuntu-24.04
               container: ubuntu:24.04
               os_label: Ubuntu 24.04 (Noble)
+            - distro: ubuntu-26.04
+              container: ubuntu:26.04
+              os_label: Ubuntu 26.04 (Resolute)
             - distro: debian-13
               container: debian:trixie
               os_label: Debian 13 (Trixie)

@@ -31,6 +31,9 @@ jobs:
             - distro: ubuntu-24.04
               container: ubuntu:24.04
               os_label: Ubuntu 24.04 (Noble)
+            - distro: ubuntu-26.04
+              container: ubuntu:26.04
+              os_label: Ubuntu 26.04 (Resolute)
             - distro: debian-13
               container: debian:trixie
               os_label: Debian 13 (Trixie)
@@ -151,14 +154,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           append_body: true
           body: |
-            ## Debian Packages (${{ matrix.os_label }})
-
-            ### Installation
-            ```bash
-            sudo dpkg -i drove-gateway_*.deb
-            sudo systemctl enable drove.gateway
-            sudo systemctl start drove.gateway
-            ```
+            ${{ matrix.os_label }}: published
           files: |
             debian-release-assets/*.deb
             debian-release-assets/SHA256SUMS-${{ matrix.distro }}.txt
