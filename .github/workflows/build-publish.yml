@@ -57,12 +57,51 @@ jobs:
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
+    - name: Resolve image tags from release type
+      id: image-tags
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        IMAGE="ghcr.io/${{ github.repository }}"
+        VERSION_TAG="${IMAGE}:${GITHUB_REF_NAME}"
+        IS_PRERELEASE=false
+
+        # Prefer GitHub Release prerelease flag when release already exists.
+        if gh release view "${GITHUB_REF_NAME}" --json isPrerelease >/dev/null 2>&1; then
+          IS_PRERELEASE="$(gh release view "${GITHUB_REF_NAME}" --json isPrerelease -q .isPrerelease)"
+        elif echo "${GITHUB_REF_NAME}" | grep -Eiq '(alpha|beta|rc|snapshot|pre)'; then
+          # Fallback for tags that follow prerelease naming conventions.
+          IS_PRERELEASE=true
+        fi
+
+        if [ "${IS_PRERELEASE}" = "true" ]; then
+          TAGS="${VERSION_TAG}"
+          BODY=$(printf '%s\n' \
+            'Container Image' \
+            '\`\`\`bash' \
+            "docker pull ${VERSION_TAG}" \
+            '\`\`\`')
+        else
+          TAGS="${VERSION_TAG},${IMAGE}:latest"
+          BODY=$(printf '%s\n' \
+            'Container Image' \
+            '\`\`\`bash' \
+            "docker pull ${VERSION_TAG}" \
+            "docker pull ${IMAGE}:latest" \
+            '\`\`\`')
+        fi
+
+        echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+        echo "body<<EOF" >> "$GITHUB_OUTPUT"
+        echo "${BODY}" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
+
     - name: Build and push Docker image
       uses: docker/build-push-action@v6
       with:
         context: docker
         push: true
-        tags: ${{ steps.meta.outputs.tags }}
+        tags: ${{ steps.image-tags.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
 
     - name: Update GitHub Release with container link
@@ -70,11 +109,6 @@ jobs:
       with:
         tag_name: ${{ github.ref_name }}
         append_body: true
-        body: |
-          ## Container Image
-
-          ```
-          docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-          ```
+        body: ${{ steps.image-tags.outputs.body }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
