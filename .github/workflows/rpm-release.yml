@@ -2,14 +2,27 @@ name: RPM Release
 
 on:
   push:
-    tags: [ 'v*' ]
+    tags: [ '*' ]
   workflow_dispatch:
 
 jobs:
-  release-rpm:
+  create-release:
     runs-on: ubuntu-latest
-    # Run on manual trigger for the selected branch, or on milestone tags from master
     if: github.event_name == 'workflow_dispatch' || github.event.base_ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          append_body: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-rpm:
+    needs: [create-release]
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
@@ -20,6 +33,7 @@ jobs:
     container: ${{ matrix.container }}
     permissions:
       contents: write
+    if: github.event_name == 'workflow_dispatch' || github.event.base_ref == 'refs/heads/master'
 
     steps:
       - name: Checkout code
@@ -72,14 +86,13 @@ jobs:
           sha256sum rpm-output/*.rpm > rpm-output/SHA256SUMS-${{ matrix.el }}.txt
           cat rpm-output/SHA256SUMS-${{ matrix.el }}.txt
 
-      - name: Upload to GitHub Release
+      - name: Upload release assets
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
-          draft: false
-          prerelease: false
+          append_body: true
           body: |
-            ## RPM Packages
+            ## RPM Packages (${{ matrix.el }})
 
             Available for **EL9** (RHEL 9 / AlmaLinux 9 / Rocky Linux 9) and **EL10** (RHEL 10 / AlmaLinux 10).
 
