@@ -1,9 +1,10 @@
 #!/usr/bin/make -f
 
 # Extract base version from changelog
-BASE_VERSION := $(shell dpkg-parsechangelog -S Version | cut -d- -f1)
-DATE         := $(shell date +"%Y-%m-%d %H:%M:%S")
-COMMIT       := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BASE_VERSION  := $(shell dpkg-parsechangelog -S Version | cut -d- -f1)
+DATE          := $(shell date +"%Y-%m-%d %H:%M:%S")
+COMMIT        := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+OS_CODENAME   := $(shell lsb_release -sc 2>/dev/null | sed 's/[^a-zA-Z0-9]//g')
 
 # Only set commit flag if known
 ifneq ($(COMMIT),unknown)
@@ -21,6 +22,11 @@ ifeq ($(IS_TAG),0)
 else
   # Release build: use version as-is from changelog
   VERSION := $(BASE_VERSION)
+endif
+
+# Append OS codename (e.g. ~focal) if available
+ifneq ($(OS_CODENAME),)
+  VERSION := $(VERSION)~$(OS_CODENAME)
 endif
 
 LDFLAGS := -X "main.version=$(VERSION)" -X "main.date=$(DATE)" $(COMMIT_LDFLAG)

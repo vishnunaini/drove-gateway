@@ -36,7 +36,13 @@ export GOPROXY=https://proxy.golang.org,direct
 export GOTOOLCHAIN=local
 
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
-LDFLAGS="-X main.version=%{build_version} -X main.date=$(date '+%%Y-%%m-%%dT%%H:%%M:%%S')"
+OS_CODENAME=$(rpm --eval '%{dist}' 2>/dev/null | sed 's/^\.//' | sed 's/[^a-zA-Z0-9]//g')
+if [ -n "$OS_CODENAME" ]; then
+    BUILD_VERSION="%{build_version}~${OS_CODENAME}"
+else
+    BUILD_VERSION="%{build_version}"
+fi
+LDFLAGS="-X main.version=${BUILD_VERSION} -X main.date=$(date '+%%Y-%%m-%%dT%%H:%%M:%%S')"
 if [ "$COMMIT" != "unknown" ]; then \
     LDFLAGS="$LDFLAGS -X main.commit=$COMMIT"; \
 fi
