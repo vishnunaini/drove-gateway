@@ -79,8 +79,10 @@ jobs:
       - name: Copy artifacts to workspace
         run: |
           mkdir -p rpm-output
-          cp ~/rpmbuild/RPMS/$(uname -m)/*.rpm rpm-output/
-          cp ~/rpmbuild/SRPMS/*.src.rpm        rpm-output/
+          find ~/rpmbuild/RPMS/$(uname -m)/ -name '*.rpm' \
+            ! -name '*-debuginfo-*' \
+            ! -name '*-debugsource-*' \
+            -exec cp {} rpm-output/ \;
           sha256sum rpm-output/*.rpm > rpm-output/SHA256SUMS-${{ matrix.el }}.txt
           cat rpm-output/SHA256SUMS-${{ matrix.el }}.txt
 
