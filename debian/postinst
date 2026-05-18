@@ -3,6 +3,14 @@ set -e
 
 case "$1" in
     configure)
+        # Ensure service is enabled on first install.
+        if [ -z "$2" ]; then
+            deb-systemd-helper enable drove.gateway.service >/dev/null || true
+            if [ -d /run/systemd/system ]; then
+                systemctl enable drove.gateway.service >/dev/null 2>&1 || true
+            fi
+        fi
+
         if [ ! -d /etc/nixy ]; then
             mkdir -p /etc/nixy
             chmod 755 /etc/nixy

@@ -88,6 +88,11 @@ install -m 0644 examples/nixy.toml %{buildroot}%{_docdir}/%{name}/examples/nixy.
 # getent passwd nixy > /dev/null || useradd -r -s /bin/false -d /var/lib/nixy nixy
 
 %post
+# Ensure service is enabled on first install.
+if [ $1 -eq 1 ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl enable drove.gateway.service >/dev/null 2>&1 || true
+fi
+
 # Create configuration directory if it doesn't exist
 mkdir -p %{_sysconfdir}/nixy
 chmod 755 %{_sysconfdir}/nixy
