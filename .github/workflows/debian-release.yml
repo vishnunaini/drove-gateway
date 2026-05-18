@@ -97,6 +97,11 @@ jobs:
       - name: Configure Git
         run: git config --global --add safe.directory "$(pwd)"
 
+      - name: Update changelog version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^drove-gateway ([^)]*)/drove-gateway (${VERSION})/" debian/changelog
+
       - name: Build
         run: |
           if [ "${{ startsWith(matrix.distro, 'ubuntu-') }}" = "true" ]; then
