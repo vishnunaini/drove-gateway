@@ -1,12 +1,26 @@
-name: Release
+name: Debian Release
 
 on:
   push:
-    tags: [ 'v*' ]
+    tags: [ '*' ]
   workflow_dispatch:
 
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          append_body: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   release-deb:
+    needs: [create-release]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -17,6 +31,9 @@ jobs:
             - distro: ubuntu-24.04
               container: ubuntu:24.04
               os_label: Ubuntu 24.04 (Noble)
+            - distro: ubuntu-26.04
+              container: ubuntu:26.04
+              os_label: Ubuntu 26.04 (Resolute)
             - distro: debian-13
               container: debian:trixie
               os_label: Debian 13 (Trixie)
@@ -83,6 +100,12 @@ jobs:
       - name: Configure Git
         run: git config --global --add safe.directory "$(pwd)"
 
+      - name: Update changelog version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          OS_SUFFIX=$(echo "${{ matrix.distro }}" | sed 's/-//')
+          sed -i "s/^drove-gateway ([^)]*)/drove-gateway (${VERSION}+${OS_SUFFIX})/" debian/changelog
+
       - name: Build
         run: |
           if [ "${{ startsWith(matrix.distro, 'ubuntu-') }}" = "true" ]; then
@@ -93,10 +116,24 @@ jobs:
             dpkg-buildpackage -us -uc -b
           fi
 
-      - name: Verify
+      - name: Verify package contents
         run: |
-          dpkg -I ../*.deb
-          lintian -i ../*.deb || true
+          ls -lh ../*.deb || echo "No .deb files generated"
+
+          if ls ../*.deb 1> /dev/null 2>&1; then
+            echo "Package contents:"
+            dpkg -c ../*.deb | head -30
+          fi
+
+      - name: Verify package integrity
+        run: |
+          if ls ../*.deb 1> /dev/null 2>&1; then
+            echo "Package information:"
+            dpkg -I ../*.deb
+            echo
+            echo "Running lintian checks..."
+            lintian -i ../*.deb || true
+          fi
 
       - name: Generate checksums
         run: |
@@ -108,21 +145,16 @@ jobs:
         run: |
           mkdir -p debian-release-assets
           cp ../*.deb debian-release-assets/
+          cp ../*.changes debian-release-assets/ 2>/dev/null || true
           cp ../SHA256SUMS-${{ matrix.distro }}.txt debian-release-assets/
 
-      - name: Create GitHub Release
+      - name: Upload release assets
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
+          append_body: true
           body: |
-            ## Debian Packages (${{ matrix.os_label }})
-
-            ### Installation
-            ```bash
-            sudo dpkg -i drove-gateway_*.deb
-            sudo systemctl enable drove.gateway
-            sudo systemctl start drove.gateway
-            ```
+            ${{ matrix.os_label }}: published
           files: |
             debian-release-assets/*.deb
             debian-release-assets/SHA256SUMS-${{ matrix.distro }}.txt

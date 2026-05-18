@@ -1,26 +1,16 @@
 #!/usr/bin/make -f
 
-# Extract base version from changelog
-BASE_VERSION := $(shell dpkg-parsechangelog -S Version | cut -d- -f1)
-DATE         := $(shell date +"%Y-%m-%d %H:%M:%S")
-COMMIT       := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+# Version is set entirely by CI via debian/changelog; no snapshot/release logic here
+BASE_VERSION  := $(shell dpkg-parsechangelog -S Version | cut -d- -f1)
+VERSION       := $(BASE_VERSION)
+DATE          := $(shell date +"%Y-%m-%d %H:%M:%S")
+COMMIT        := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # Only set commit flag if known
 ifneq ($(COMMIT),unknown)
 	COMMIT_LDFLAG := -X "main.commit=$(COMMIT)"
 else
 	COMMIT_LDFLAG :=
-endif
-
-# Detect if building from a tag (release) or not (snapshot)
-IS_TAG := $(shell git describe --exact-match --tags $(COMMIT) 2>/dev/null | grep -q '^v' && echo 1 || echo 0)
-ifeq ($(IS_TAG),0)
-  # Snapshot build: append branch name and commit hash
-  BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null | sed 's|[/_]|.|g; s|[^a-zA-Z0-9.+~-]||g' | sed 's|\.$$||')
-  VERSION := $(BASE_VERSION)~snapshot+$(BRANCH).$(COMMIT)
-else
-  # Release build: use version as-is from changelog
-  VERSION := $(BASE_VERSION)
 endif
 
 LDFLAGS := -X "main.version=$(VERSION)" -X "main.date=$(DATE)" $(COMMIT_LDFLAG)

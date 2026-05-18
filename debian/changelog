@@ -1,4 +1,4 @@
-drove-gateway (1.0) unstable; urgency=medium
+drove-gateway (2.0) unstable; urgency=medium
 
   * Initial release with deb/rpm packaging.
 

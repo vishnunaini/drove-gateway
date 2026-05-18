@@ -19,6 +19,9 @@ jobs:
             - distro: ubuntu-24.04
               container: ubuntu:24.04
               os_label: Ubuntu 24.04 (Noble)
+            - distro: ubuntu-26.04
+              container: ubuntu:26.04
+              os_label: Ubuntu 26.04 (Resolute)
             - distro: debian-13
               container: debian:trixie
               os_label: Debian 13 (Trixie)
@@ -94,7 +97,8 @@ jobs:
           fi
           BRANCH=$(echo "${BRANCH_NAME}" | sed 's|[/_]|.|g; s|[^a-zA-Z0-9.+~-]||g')
           SHORT_SHA=$(printf '%s' "${GITHUB_SHA}" | cut -c1-7)
-          SNAPSHOT_VERSION="${BASE_VERSION}~snapshot+${BRANCH}.${SHORT_SHA}"
+          OS_SUFFIX=$(echo "${{ matrix.distro }}" | sed 's/-//')
+          SNAPSHOT_VERSION="${BASE_VERSION}~snapshot+${BRANCH}.${SHORT_SHA}+${OS_SUFFIX}"
           export DEBEMAIL="github-actions@github.com"
           export DEBFULLNAME="GitHub Actions"
             dch -b --newversion "${SNAPSHOT_VERSION}" \
