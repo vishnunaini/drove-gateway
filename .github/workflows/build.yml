@@ -34,21 +34,21 @@ jobs:
       
       - name: Download dependencies
         run: |
-          go mod download
-          go mod verify
+          go -C src mod download
+          go -C src mod verify
       
       - name: Extract version
         id: version
         run: |
-          # debian/changelog is the single source of truth for the upstream version
-          VERSION=$(grep -m1 '^drove-gateway' debian/changelog | grep -oP '\(\K[^)]+' | cut -d- -f1)
+          # src/debian/changelog is the single source of truth for the upstream version
+          VERSION=$(grep -m1 '^drove-gateway' src/debian/changelog | grep -oP '\(\K[^)]+' | cut -d- -f1)
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Build binary
         run: |
-          go build -v \
+          go -C src build -v \
             -ldflags="-X main.version=${{ steps.version.outputs.version }} -X main.commit=${{ github.sha }}" \
-            -o nixy .
+            -o ../nixy .
       
       - name: Verify binary
         run: |

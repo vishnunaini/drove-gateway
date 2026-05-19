@@ -55,7 +55,7 @@ jobs:
 
       - name: Clean build tree
         run: |
-          dh clean || true
+          cd src && dh clean || true
 
       - name: Install build dependencies
         run: |
@@ -80,9 +80,9 @@ jobs:
             lintian \
             perl
 
-          # Build the build-deps package from debian/control, then install it explicitly.
+          # Build the build-deps package from src/debian/control, then install it explicitly.
           rm -f ./*build-deps*.deb
-          mk-build-deps --build-dep debian/control
+          mk-build-deps --build-dep src/debian/control
           BUILD_DEPS_DEB=$(find . -maxdepth 1 -type f -name '*build-deps*.deb' | head -n1)
           if [ -z "${BUILD_DEPS_DEB}" ]; then
             echo "No *build-deps*.deb package found after mk-build-deps"
@@ -104,10 +104,11 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           OS_SUFFIX=$(echo "${{ matrix.distro }}" | sed 's/-//')
-          sed -i "s/^drove-gateway ([^)]*)/drove-gateway (${VERSION}+${OS_SUFFIX})/" debian/changelog
+          sed -i "s/^drove-gateway ([^)]*)/drove-gateway (${VERSION}+${OS_SUFFIX})/" src/debian/changelog
 
       - name: Build
         run: |
+          cd src
           if [ "${{ startsWith(matrix.distro, 'ubuntu-') }}" = "true" ]; then
             # Ubuntu containers may not satisfy Debian-specific Build-Depends exactly.
             # Build with deps preinstalled and skip strict checkbuilddeps gate.

@@ -3,5 +3,5 @@ export GOPATH=export GOPATH=$PWD
 export PATH=$PATH:$GOPATH/bin
 export GOROOT=/usr/local/go
 export PATH=$PATH:$GOROOT/bin
-# Go module now at repo root - run from root
-cd .. && go run .
+# Go module and main package live in src/
+cd ../src && go run .

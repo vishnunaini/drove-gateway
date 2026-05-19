@@ -52,11 +52,11 @@ jobs:
 
       - name: Prepare sources
         run: |
-          BASE_VERSION=$(sed -n '1s/^drove-gateway (\([^)]*\)).*/\1/p' debian/changelog | cut -d- -f1)
+          BASE_VERSION=$(sed -n '1s/^drove-gateway (\([^)]*\)).*/\1/p' src/debian/changelog | cut -d- -f1)
           rpmdev-setuptree
-          cp rpmbuild/SPECS/drove-gateway.spec ~/rpmbuild/SPECS/
+          cp src/rpmbuild/SPECS/drove-gateway.spec ~/rpmbuild/SPECS/
           # Tarball top-level dir must match %setup -n drove-gateway in spec
-          tar --exclude='.git' --exclude='.github' --exclude='rpmbuild' \
+          tar --exclude='.git' --exclude='.github' --exclude='src/rpmbuild' \
               -czf ~/rpmbuild/SOURCES/drove-gateway-${BASE_VERSION}.tar.gz \
               --transform 's|^\./|drove-gateway/|' \
               -C . .

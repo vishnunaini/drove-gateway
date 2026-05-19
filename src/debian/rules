@@ -44,7 +44,7 @@ export GOTOOLCHAIN=local
 %:
 	dh $@
 
-# Override build step: compile the Go binary from root-level module
+# Override build step: compile the Go binary from src/
 # dh-sequence-golang will handle standard module detection, but we need custom LDFLAGS and PIE
 override_dh_auto_build:
 	go build -mod=mod -buildmode=pie -v -ldflags '$(LDFLAGS)' -o nixy .

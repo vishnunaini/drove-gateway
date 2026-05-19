@@ -43,7 +43,7 @@ jobs:
 
       - name: Clean build tree
         run: |
-          dh clean || true
+          cd src && dh clean || true
 
       - name: Install build dependencies
         run: |
@@ -68,9 +68,9 @@ jobs:
             lintian \
             perl
 
-          # Build the build-deps package from debian/control, then install it explicitly.
+          # Build the build-deps package from src/debian/control, then install it explicitly.
           rm -f ./*build-deps*.deb
-          mk-build-deps --build-dep debian/control
+          mk-build-deps --build-dep src/debian/control
           BUILD_DEPS_DEB=$(find . -maxdepth 1 -type f -name '*build-deps*.deb' | head -n1)
           if [ -z "${BUILD_DEPS_DEB}" ]; then
             echo "No *build-deps*.deb package found after mk-build-deps"
@@ -90,7 +90,7 @@ jobs:
 
       - name: Set snapshot version in changelog
         run: |
-          BASE_VERSION=$(dpkg-parsechangelog -S Version | cut -d- -f1)
+          BASE_VERSION=$(dpkg-parsechangelog -l src/debian/changelog -S Version | cut -d- -f1)
           BRANCH_NAME="${{ github.head_ref }}"
           if [ -z "${BRANCH_NAME}" ]; then
             BRANCH_NAME="${{ github.ref_name }}"
@@ -101,13 +101,14 @@ jobs:
           SNAPSHOT_VERSION="${BASE_VERSION}~snapshot+${BRANCH}.${SHORT_SHA}+${OS_SUFFIX}"
           export DEBEMAIL="github-actions@github.com"
           export DEBFULLNAME="GitHub Actions"
-            dch -b --newversion "${SNAPSHOT_VERSION}" \
-              --distribution unstable \
-              "Snapshot build for ${BRANCH_NAME} @ ${SHORT_SHA}"
+          dch -c src/debian/changelog -b --newversion "${SNAPSHOT_VERSION}" \
+            --distribution unstable \
+            "Snapshot build for ${BRANCH_NAME} @ ${SHORT_SHA}"
           echo "SNAPSHOT_VERSION=${SNAPSHOT_VERSION}" >> "$GITHUB_ENV"
 
       - name: Build
         run: |
+          cd src
           if [ "${{ startsWith(matrix.distro, 'ubuntu-') }}" = "true" ]; then
             # Ubuntu containers may not satisfy Debian-specific Build-Depends exactly.
             # Build with deps preinstalled and skip strict checkbuilddeps gate.

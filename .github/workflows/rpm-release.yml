@@ -56,14 +56,14 @@ jobs:
       - name: Update spec version from tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          sed -i "s/^Version:.*/Version:        ${VERSION}/" rpmbuild/SPECS/drove-gateway.spec
+          sed -i "s/^Version:.*/Version:        ${VERSION}/" src/rpmbuild/SPECS/drove-gateway.spec
 
       - name: Prepare sources
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           rpmdev-setuptree
-          cp rpmbuild/SPECS/drove-gateway.spec ~/rpmbuild/SPECS/
-          tar --exclude='.git' --exclude='.github' --exclude='rpmbuild' \
+          cp src/rpmbuild/SPECS/drove-gateway.spec ~/rpmbuild/SPECS/
+          tar --exclude='.git' --exclude='.github' --exclude='src/rpmbuild' \
               -czf ~/rpmbuild/SOURCES/drove-gateway-${VERSION}.tar.gz \
               --transform 's|^\./|drove-gateway/|' \
               -C . .

@@ -26,12 +26,12 @@ jobs:
 
       - name: Download dependencies
         run: |
-          go mod download
-          go mod verify
+          go -C src mod download
+          go -C src mod verify
       
       - name: Check for vulnerable dependencies
         run: |
-          go list -json -m all | go run github.com/sonatype-nexus-community/nancy@latest sleuth
+          go -C src list -json -m all | go run github.com/sonatype-nexus-community/nancy@latest sleuth
         continue-on-error: true
       
       - name: Run dependabot
