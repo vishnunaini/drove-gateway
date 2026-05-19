@@ -119,35 +119,38 @@ jobs:
 
       - name: Verify package contents
         run: |
-          ls -lh ../*.deb || echo "No .deb files generated"
+          ls -lh *.deb || echo "No .deb files generated"
 
-          if ls ../*.deb 1> /dev/null 2>&1; then
+          if ls *.deb 1> /dev/null 2>&1; then
             echo "Package contents:"
-            dpkg -c ../*.deb | head -30
+            dpkg -c *.deb | head -30
           fi
 
       - name: Verify package integrity
         run: |
-          if ls ../*.deb 1> /dev/null 2>&1; then
+          if ls *.deb 1> /dev/null 2>&1; then
             echo "Package information:"
-            dpkg -I ../*.deb
+            dpkg -I *.deb
             echo
             echo "Running lintian checks..."
-            lintian -i ../*.deb || true
+            lintian -i *.deb || true
           fi
 
       - name: Generate checksums
         run: |
-          cd ..
+          if ! ls *.deb 1> /dev/null 2>&1; then
+            echo "No .deb files found for checksum generation"
+            exit 1
+          fi
           sha256sum *.deb > SHA256SUMS-${{ matrix.distro }}.txt
           cat SHA256SUMS-${{ matrix.distro }}.txt
 
       - name: Stage release assets in workspace
         run: |
           mkdir -p debian-release-assets
-          cp ../*.deb debian-release-assets/
-          cp ../*.changes debian-release-assets/ 2>/dev/null || true
-          cp ../SHA256SUMS-${{ matrix.distro }}.txt debian-release-assets/
+          cp *.deb debian-release-assets/
+          cp *.changes debian-release-assets/ 2>/dev/null || true
+          cp SHA256SUMS-${{ matrix.distro }}.txt debian-release-assets/
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v1

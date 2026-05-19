@@ -72,6 +72,10 @@ jobs:
       - name: Copy artifacts to workspace
         run: |
           mkdir -p rpm-output
+          if ! ls ~/rpmbuild/RPMS/$(uname -m)/*.rpm 1> /dev/null 2>&1; then
+            echo "No binary RPMs found in ~/rpmbuild/RPMS/$(uname -m)"
+            exit 1
+          fi
           cp ~/rpmbuild/RPMS/$(uname -m)/*.rpm rpm-output/
           cp ~/rpmbuild/SRPMS/*.src.rpm        rpm-output/
 

@@ -83,6 +83,10 @@ jobs:
             ! -name '*-debuginfo-*' \
             ! -name '*-debugsource-*' \
             -exec cp {} rpm-output/ \;
+          if ! ls rpm-output/*.rpm 1> /dev/null 2>&1; then
+            echo "No RPM artifacts copied to rpm-output/"
+            exit 1
+          fi
           sha256sum rpm-output/*.rpm > rpm-output/SHA256SUMS-${{ matrix.el }}.txt
           cat rpm-output/SHA256SUMS-${{ matrix.el }}.txt
 
