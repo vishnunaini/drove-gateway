@@ -50,6 +50,9 @@ pushd src
 go build -mod=mod -v -ldflags="$LDFLAGS" -o ../nixy .
 popd
 
+mkdir -p src/rpmbuild/examples
+cp -a examples/. src/rpmbuild/examples/
+
 %install
 # Create directories
 mkdir -p %{buildroot}%{_bindir}
@@ -62,7 +65,7 @@ mkdir -p %{buildroot}%{_docdir}/%{name}/examples
 install -m 0755 nixy %{buildroot}%{_bindir}/nixy
 
 # Install systemd service file
-install -m 0644 support/drove.gateway.service %{buildroot}%{_unitdir}/
+install -m 0644 src/rpmbuild/examples/drove.gateway.service %{buildroot}%{_unitdir}/
 
 # Install configuration files
 install -m 0644 src/nixy.toml %{buildroot}%{_sysconfdir}/nixy/nixy.toml.example
@@ -82,8 +85,8 @@ install -m 0644 src/*.conf %{buildroot}%{_sysconfdir}/nixy/ 2>/dev/null || true
 
 # Install documentation and examples
 install -m 0644 README.md %{buildroot}%{_docdir}/%{name}/
-install -m 0644 examples/*.tmpl %{buildroot}%{_docdir}/%{name}/examples/ 2>/dev/null || true
-install -m 0644 examples/nixy.toml %{buildroot}%{_docdir}/%{name}/examples/nixy.toml.example 2>/dev/null || true
+install -m 0644 src/rpmbuild/examples/*.tmpl %{buildroot}%{_docdir}/%{name}/examples/ 2>/dev/null || true
+install -m 0644 src/rpmbuild/examples/nixy.toml %{buildroot}%{_docdir}/%{name}/examples/nixy.toml.example 2>/dev/null || true
 
 %pre
 # Create nixy user if it doesn't exist (optional: currently runs as root)

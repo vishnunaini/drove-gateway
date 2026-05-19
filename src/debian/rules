@@ -48,6 +48,8 @@ export GOTOOLCHAIN=local
 # dh-sequence-golang will handle standard module detection, but we need custom LDFLAGS and PIE
 override_dh_auto_build:
 	go build -mod=mod -buildmode=pie -v -ldflags '$(LDFLAGS)' -o nixy .
+	mkdir -p debian/examples
+	cp -a ../examples/. debian/examples/
 
 # Override install step: install binary only; let dh_install handle the rest via debian/install
 override_dh_auto_install:
@@ -69,4 +71,4 @@ override_dh_dwz:
 # Clean build artifacts and helper files
 override_dh_clean:
 	dh_clean
-	rm -rf .gopath nixy nixy.exe nixy.test obj-* debian/drove-gateway/usr/bin/nixy
+	rm -rf .gopath nixy nixy.exe nixy.test obj-* debian/drove-gateway/usr/bin/nixy debian/examples
