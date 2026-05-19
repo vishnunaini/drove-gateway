@@ -29,8 +29,7 @@ jobs:
 
       - name: Build binary
         run: |
-          go build -mod=mod -o nixy .
-          mv nixy ./docker/
+          go -C src build -mod=mod -o ../docker/nixy .
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2

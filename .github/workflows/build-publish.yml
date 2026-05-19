@@ -35,13 +35,12 @@ jobs:
     - name: Build
       working-directory: .
       run: |
-        go get .
+        go -C src mod download
 
     - name: Build
       working-directory: .
       run: |
-        go build .
-        mv nixy ./docker/
+        go -C src build -o ../docker/nixy .
 
 
     - name: Log in to the Container registry

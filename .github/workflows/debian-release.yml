@@ -55,7 +55,7 @@ jobs:
 
       - name: Clean build tree
         run: |
-          dh clean || true
+          cd src && dh clean || true
 
       - name: Install build dependencies
         run: |
@@ -80,15 +80,16 @@ jobs:
             lintian \
             perl
 
-          # Build the build-deps package from debian/control, then install it explicitly.
+          # Build the build-deps package from src/debian/control, then install it explicitly.
           rm -f ./*build-deps*.deb
-          mk-build-deps --build-dep debian/control
+          mk-build-deps --build-dep src/debian/control
           BUILD_DEPS_DEB=$(find . -maxdepth 1 -type f -name '*build-deps*.deb' | head -n1)
           if [ -z "${BUILD_DEPS_DEB}" ]; then
             echo "No *build-deps*.deb package found after mk-build-deps"
             exit 1
           fi
           apt-get install -y --no-install-recommends "${BUILD_DEPS_DEB}"
+          rm -f "${BUILD_DEPS_DEB}"
 
       - name: Ensure Go 1.23 is in PATH
         run: |
@@ -104,10 +105,11 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           OS_SUFFIX=$(echo "${{ matrix.distro }}" | sed 's/-//')
-          sed -i "s/^drove-gateway ([^)]*)/drove-gateway (${VERSION}+${OS_SUFFIX})/" debian/changelog
+          sed -i "s/^drove-gateway ([^)]*)/drove-gateway (${VERSION}+${OS_SUFFIX})/" src/debian/changelog
 
       - name: Build
         run: |
+          cd src
           if [ "${{ startsWith(matrix.distro, 'ubuntu-') }}" = "true" ]; then
             # Ubuntu containers may not satisfy Debian-specific Build-Depends exactly.
             # Build with deps preinstalled and skip strict checkbuilddeps gate.
@@ -118,35 +120,45 @@ jobs:
 
       - name: Verify package contents
         run: |
-          ls -lh ../*.deb || echo "No .deb files generated"
+          ls -lh *.deb || echo "No .deb files generated"
 
-          if ls ../*.deb 1> /dev/null 2>&1; then
+          DEB_FILES=$(find . -maxdepth 1 -type f -name '*.deb' ! -name '*build-deps*' -print)
+          if [ -n "${DEB_FILES}" ]; then
             echo "Package contents:"
-            dpkg -c ../*.deb | head -30
+            for deb in ${DEB_FILES}; do
+              dpkg -c "${deb}" | head -30
+            done
           fi
 
       - name: Verify package integrity
         run: |
-          if ls ../*.deb 1> /dev/null 2>&1; then
+          DEB_FILES=$(find . -maxdepth 1 -type f -name '*.deb' ! -name '*build-deps*' -print)
+          if [ -n "${DEB_FILES}" ]; then
             echo "Package information:"
-            dpkg -I ../*.deb
-            echo
+            for deb in ${DEB_FILES}; do
+              dpkg -I "${deb}"
+              echo
+            done
             echo "Running lintian checks..."
-            lintian -i ../*.deb || true
+            lintian -i ${DEB_FILES} || true
           fi
 
       - name: Generate checksums
         run: |
-          cd ..
-          sha256sum *.deb > SHA256SUMS-${{ matrix.distro }}.txt
+          DEB_FILES=$(find . -maxdepth 1 -type f -name '*.deb' ! -name '*build-deps*' -print)
+          if [ -z "${DEB_FILES}" ]; then
+            echo "No .deb files found for checksum generation"
+            exit 1
+          fi
+          sha256sum ${DEB_FILES} > SHA256SUMS-${{ matrix.distro }}.txt
           cat SHA256SUMS-${{ matrix.distro }}.txt
 
       - name: Stage release assets in workspace
         run: |
           mkdir -p debian-release-assets
-          cp ../*.deb debian-release-assets/
-          cp ../*.changes debian-release-assets/ 2>/dev/null || true
-          cp ../SHA256SUMS-${{ matrix.distro }}.txt debian-release-assets/
+          cp drove-gateway_*.deb debian-release-assets/
+          cp *.changes debian-release-assets/ 2>/dev/null || true
+          cp SHA256SUMS-${{ matrix.distro }}.txt debian-release-assets/
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v1

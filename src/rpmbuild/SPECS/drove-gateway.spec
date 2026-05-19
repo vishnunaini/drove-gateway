@@ -30,7 +30,7 @@ event stream and dynamically updates proxy configurations in real-time.
 %setup -q -n drove-gateway
 
 %build
-# Go module now at repository root
+# Build main package from src/ (module root)
 export GO111MODULE=on
 export GOPROXY=https://proxy.golang.org,direct
 export GOTOOLCHAIN=local
@@ -46,7 +46,12 @@ LDFLAGS="-X main.version=${BUILD_VERSION} -X main.date=$(date '+%%Y-%%m-%%dT%%H:
 if [ "$COMMIT" != "unknown" ]; then \
     LDFLAGS="$LDFLAGS -X main.commit=$COMMIT"; \
 fi
-go build -mod=mod -v -ldflags="$LDFLAGS" -o nixy .
+pushd src
+go build -mod=mod -v -ldflags="$LDFLAGS" -o ../nixy .
+popd
+
+mkdir -p src/rpmbuild/examples
+cp -a examples/. src/rpmbuild/examples/
 
 %install
 # Create directories
@@ -60,12 +65,12 @@ mkdir -p %{buildroot}%{_docdir}/%{name}/examples
 install -m 0755 nixy %{buildroot}%{_bindir}/nixy
 
 # Install systemd service file
-install -m 0644 support/drove.gateway.service %{buildroot}%{_unitdir}/
+install -m 0644 src/rpmbuild/examples/drove.gateway.service %{buildroot}%{_unitdir}/
 
 # Install configuration files
-install -m 0644 config/nixy.toml %{buildroot}%{_sysconfdir}/nixy/nixy.toml.example
+install -m 0644 src/nixy.toml %{buildroot}%{_sysconfdir}/nixy/nixy.toml.example
 
-for tmpl in config/*.tmpl; do
+for tmpl in src/*.tmpl; do
     name=$(basename "$tmpl")
     if [ "$name" = "nginx.tmpl" ]; then
         # Only install nginx.tmpl if not present
@@ -76,12 +81,12 @@ for tmpl in config/*.tmpl; do
         install -m 0644 "$tmpl" "%{buildroot}%{_sysconfdir}/nixy/"
     fi
 done
-install -m 0644 config/*.conf %{buildroot}%{_sysconfdir}/nixy/ 2>/dev/null || true
+install -m 0644 src/*.conf %{buildroot}%{_sysconfdir}/nixy/ 2>/dev/null || true
 
 # Install documentation and examples
 install -m 0644 README.md %{buildroot}%{_docdir}/%{name}/
-install -m 0644 examples/*.tmpl %{buildroot}%{_docdir}/%{name}/examples/ 2>/dev/null || true
-install -m 0644 examples/nixy.toml %{buildroot}%{_docdir}/%{name}/examples/nixy.toml.example 2>/dev/null || true
+install -m 0644 src/rpmbuild/examples/*.tmpl %{buildroot}%{_docdir}/%{name}/examples/ 2>/dev/null || true
+install -m 0644 src/rpmbuild/examples/nixy.toml %{buildroot}%{_docdir}/%{name}/examples/nixy.toml.example 2>/dev/null || true
 
 %pre
 # Create nixy user if it doesn't exist (optional: currently runs as root)
