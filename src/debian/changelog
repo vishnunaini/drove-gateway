@@ -1,3 +1,10 @@
+drove-gateway (2.3) unstable; urgency=medium
+
+  * Release 2.3.
+  * See release notes: https://github.com/vishnunaini/drove-gateway/releases/tag/2.3
+
+ -- github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>  Wed, 20 May 2026 12:19:41 +0000
+
 drove-gateway (2.0) unstable; urgency=medium
 
   * Initial release with deb/rpm packaging.
