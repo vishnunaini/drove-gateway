@@ -3,6 +3,8 @@ name: Release Bot Version Bump
 on:
   push:
     tags: [ '*' ]
+  release:
+    types: [ published ]
 
 jobs:
   bump-packaging-versions:
