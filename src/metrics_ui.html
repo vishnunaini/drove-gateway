@@ -64,7 +64,8 @@
       color: var(--muted);
     }
 
-    .controls input {
+    .controls input,
+    .controls select {
       height: 30px;
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -82,6 +83,11 @@
       color: var(--ink);
       padding: 0 10px;
       cursor: pointer;
+    }
+
+    .controls button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
     }
 
     .controls button.primary {
@@ -120,6 +126,35 @@
       background: var(--card);
       padding: 12px;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+      cursor: pointer;
+    }
+
+    .card.selected {
+      border-color: #0f766e;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.14);
+    }
+
+    .card.span-2 {
+      grid-column: span 2;
+    }
+
+    .card.span-full {
+      grid-column: 1 / -1;
+    }
+
+    .grid.grid-focus {
+      grid-template-columns: 1fr;
+    }
+
+    .grid.grid-focus .card {
+      display: none;
+    }
+
+    .grid.grid-focus .card.panel-expanded {
+      display: block;
+      grid-column: 1 / -1;
+      min-height: calc(100vh - 220px);
     }
 
     .title-row {
@@ -152,6 +187,28 @@
       color: var(--muted);
       font-size: 12px;
       min-height: 16px;
+    }
+
+    .panel-tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 0 0 8px 0;
+    }
+
+    .panel-tools button {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      font-size: 11px;
+      line-height: 1;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+
+    .panel-tools button:hover {
+      background: #f8fafc;
     }
 
     .canvas-wrap {
@@ -216,6 +273,11 @@
         grid-template-columns: 1fr;
       }
 
+      .card.span-2,
+      .card.span-full {
+        grid-column: span 1;
+      }
+
       .canvas-wrap {
         height: 160px;
       }
@@ -239,14 +301,22 @@
         Filter
         <input id="filterText" type="text" value="" placeholder="metric name">
       </label>
+      <label>
+        Bucket (le)
+        <select id="bucketSelector">
+          <option value="__all__">All</option>
+        </select>
+      </label>
       <button id="applyBtn" class="primary">Apply</button>
       <button id="pauseBtn">Pause</button>
       <button id="refreshBtn">Refresh now</button>
+      <button id="expandSelectedBtn">Expand selected</button>
     </div>
     <div class="status">
       <span id="statusText">Waiting for first fetch...</span>
       <span id="lastUpdated"></span>
       <span id="counts"></span>
+      <span id="selectedPanelText">No panel selected</span>
     </div>
   </header>
 
@@ -262,12 +332,15 @@
       var refreshInput = document.getElementById('refreshSec');
       var historyInput = document.getElementById('historyPoints');
       var filterInput = document.getElementById('filterText');
+      var bucketSelector = document.getElementById('bucketSelector');
       var applyBtn = document.getElementById('applyBtn');
       var pauseBtn = document.getElementById('pauseBtn');
       var refreshBtn = document.getElementById('refreshBtn');
+      var expandSelectedBtn = document.getElementById('expandSelectedBtn');
       var statusText = document.getElementById('statusText');
       var lastUpdated = document.getElementById('lastUpdated');
       var counts = document.getElementById('counts');
+      var selectedPanelText = document.getElementById('selectedPanelText');
       var grid = document.getElementById('metricsGrid');
 
       var chartPalette = [
@@ -284,6 +357,17 @@
       var chartSeriesLimit = 16;
       var functionDurationFamilyName = 'drove_gateway_function_duration_seconds';
       var functionLabelKey = 'function';
+      var bucketLabelKey = 'le';
+      var bucketFilterAllValue = '__all__';
+      var latestFamilies = [];
+      var panelLayoutState = new Map();
+      var selectedPanelKey = '';
+      var expandedPanelKey = '';
+      var panelHeightStepPx = 40;
+      var panelMinHeightPx = 140;
+      var panelMaxHeightPx = 920;
+      var panelSpanOrder = ['1', '2', 'full'];
+      var panelTitleByKey = new Map();
 
       function schedulePolling() {
         if (pollTimer !== null) {
@@ -303,6 +387,69 @@
           return fallback;
         }
         return Math.floor(n);
+      }
+
+      function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function getPanelLayout(panelKey) {
+        var layout = panelLayoutState.get(panelKey);
+        if (!layout) {
+          layout = {
+            heightPx: 180,
+            span: '1'
+          };
+          panelLayoutState.set(panelKey, layout);
+        }
+        return layout;
+      }
+
+      function adjustPanelHeight(panelKey, deltaPx) {
+        var layout = getPanelLayout(panelKey);
+        layout.heightPx = clamp(layout.heightPx + deltaPx, panelMinHeightPx, panelMaxHeightPx);
+      }
+
+      function adjustPanelSpan(panelKey, step) {
+        var layout = getPanelLayout(panelKey);
+        var currentIndex = panelSpanOrder.indexOf(layout.span);
+        if (currentIndex === -1) {
+          currentIndex = 0;
+        }
+        var nextIndex = clamp(currentIndex + step, 0, panelSpanOrder.length - 1);
+        layout.span = panelSpanOrder[nextIndex];
+      }
+
+      function getPanelDisplayName(panelKey) {
+        return panelTitleByKey.get(panelKey) || panelKey;
+      }
+
+      function updateExpandSelectedButton() {
+        if (!expandSelectedBtn) {
+          return;
+        }
+        if (expandedPanelKey) {
+          expandSelectedBtn.textContent = 'Collapse expanded';
+          expandSelectedBtn.disabled = false;
+          return;
+        }
+        expandSelectedBtn.textContent = 'Expand selected';
+        expandSelectedBtn.disabled = !selectedPanelKey;
+      }
+
+      function updateSelectedPanelStatusText() {
+        if (!selectedPanelText) {
+          return;
+        }
+        if (expandedPanelKey) {
+          selectedPanelText.textContent = 'Expanded panel: ' + getPanelDisplayName(expandedPanelKey);
+          return;
+        }
+        if (selectedPanelKey) {
+          selectedPanelText.textContent = 'Selected panel: ' + getPanelDisplayName(selectedPanelKey);
+          return;
+        }
+        selectedPanelText.textContent = 'No panel selected';
       }
 
       function escapeHtml(text) {
@@ -629,9 +776,112 @@
         return panels;
       }
 
-      function renderPanel(panel) {
+      function isBucketSample(sample) {
+        if (!sample || !sample.metricName || !sample.labels) {
+          return false;
+        }
+        return sample.metricName.endsWith('_bucket') && Object.prototype.hasOwnProperty.call(sample.labels, bucketLabelKey);
+      }
+
+      function parseBucketValue(rawValue) {
+        if (rawValue === '+Inf' || rawValue === 'Inf' || rawValue === 'inf') {
+          return Number.POSITIVE_INFINITY;
+        }
+        var parsed = Number(rawValue);
+        if (Number.isFinite(parsed)) {
+          return parsed;
+        }
+        return null;
+      }
+
+      function compareBucketValues(left, right) {
+        var leftNumber = parseBucketValue(left);
+        var rightNumber = parseBucketValue(right);
+
+        if (leftNumber !== null && rightNumber !== null) {
+          return leftNumber - rightNumber;
+        }
+        if (leftNumber !== null) {
+          return -1;
+        }
+        if (rightNumber !== null) {
+          return 1;
+        }
+        return left.localeCompare(right);
+      }
+
+      function collectBucketValues(families) {
+        var values = new Set();
+        for (var i = 0; i < families.length; i++) {
+          var family = families[i];
+          for (var j = 0; j < family.samples.length; j++) {
+            var sample = family.samples[j];
+            if (isBucketSample(sample)) {
+              values.add(sample.labels[bucketLabelKey]);
+            }
+          }
+        }
+        return Array.from(values).sort(compareBucketValues);
+      }
+
+      function updateBucketSelectorOptions(families) {
+        var previousValue = bucketSelector.value || bucketFilterAllValue;
+        var bucketValues = collectBucketValues(families);
+
+        bucketSelector.innerHTML = '';
+        var allOption = document.createElement('option');
+        allOption.value = bucketFilterAllValue;
+        allOption.textContent = 'All';
+        bucketSelector.appendChild(allOption);
+
+        for (var i = 0; i < bucketValues.length; i++) {
+          var value = bucketValues[i];
+          var option = document.createElement('option');
+          option.value = value;
+          option.textContent = value;
+          bucketSelector.appendChild(option);
+        }
+
+        if (previousValue === bucketFilterAllValue || bucketValues.indexOf(previousValue) !== -1) {
+          bucketSelector.value = previousValue;
+        } else {
+          bucketSelector.value = bucketFilterAllValue;
+        }
+
+        bucketSelector.disabled = bucketValues.length === 0;
+      }
+
+      function filterSamplesByBucket(samples, selectedBucket) {
+        if (selectedBucket === bucketFilterAllValue) {
+          return samples;
+        }
+
+        var filtered = [];
+        for (var i = 0; i < samples.length; i++) {
+          var sample = samples[i];
+          if (!isBucketSample(sample) || sample.labels[bucketLabelKey] === selectedBucket) {
+            filtered.push(sample);
+          }
+        }
+        return filtered;
+      }
+
+      function renderPanel(panel, selectedBucket) {
+        var panelSamples = filterSamplesByBucket(panel.samples, selectedBucket);
+        if (panelSamples.length === 0) {
+          return 0;
+        }
+
+        var panelLayout = getPanelLayout(panel.key);
         var card = document.createElement('section');
         card.className = 'card';
+        card.classList.add('span-' + panelLayout.span);
+        if (selectedPanelKey === panel.key) {
+          card.classList.add('selected');
+        }
+        if (expandedPanelKey === panel.key) {
+          card.classList.add('panel-expanded');
+        }
 
         var helpText = panel.help;
         if (panel.splitFieldLabel) {
@@ -644,10 +894,16 @@
           '  <div class="metric-type">' + escapeHtml(panel.type) + '</div>' +
           '</div>' +
           '<p class="metric-help">' + escapeHtml(helpText) + '</p>' +
+          '<div class="panel-tools">' +
+          '  <button type="button" data-panel-action="span-dec" title="Decrease panel width">W-</button>' +
+          '  <button type="button" data-panel-action="span-inc" title="Increase panel width">W+</button>' +
+          '  <button type="button" data-panel-action="height-dec" title="Decrease chart height">H-</button>' +
+          '  <button type="button" data-panel-action="height-inc" title="Increase chart height">H+</button>' +
+          '</div>' +
           '<div class="canvas-wrap"><canvas></canvas></div>' +
           '<div class="small-note" data-note></div>' +
           '<details>' +
-          '  <summary>Series values (' + panel.samples.length + ')</summary>' +
+          '  <summary>Series values (' + panelSamples.length + ')</summary>' +
           '  <table>' +
           '    <thead><tr><th>Series</th><th>Value</th></tr></thead>' +
           '    <tbody></tbody>' +
@@ -657,9 +913,43 @@
         card.innerHTML = titleHtml;
         grid.appendChild(card);
 
+        card.addEventListener('click', function () {
+          if (selectedPanelKey === panel.key) {
+            return;
+          }
+          selectedPanelKey = panel.key;
+          updateSelectedPanelStatusText();
+          updateExpandSelectedButton();
+          renderFamilies(latestFamilies);
+        });
+
+        var panelToolButtons = card.querySelectorAll('[data-panel-action]');
+        for (var toolIndex = 0; toolIndex < panelToolButtons.length; toolIndex++) {
+          panelToolButtons[toolIndex].addEventListener('click', function (event) {
+            event.stopPropagation();
+            var action = event.currentTarget.getAttribute('data-panel-action');
+            if (action === 'span-dec') {
+              adjustPanelSpan(panel.key, -1);
+            } else if (action === 'span-inc') {
+              adjustPanelSpan(panel.key, 1);
+            } else if (action === 'height-dec') {
+              adjustPanelHeight(panel.key, -panelHeightStepPx);
+            } else if (action === 'height-inc') {
+              adjustPanelHeight(panel.key, panelHeightStepPx);
+            }
+            renderFamilies(latestFamilies);
+          });
+        }
+
+        var canvasWrap = card.querySelector('.canvas-wrap');
+        canvasWrap.style.height = String(panelLayout.heightPx) + 'px';
+        if (expandedPanelKey === panel.key) {
+          canvasWrap.style.height = '70vh';
+        }
+
         var tbody = card.querySelector('tbody');
-        for (var i = 0; i < panel.samples.length; i++) {
-          var sample = panel.samples[i];
+        for (var i = 0; i < panelSamples.length; i++) {
+          var sample = panelSamples[i];
           var row = document.createElement('tr');
           var label = buildSeriesLabel(sample.metricName, sample.labels);
           row.innerHTML = '<td>' + escapeHtml(label) + '</td><td>' + escapeHtml(formatValue(sample.value)) + '</td>';
@@ -667,24 +957,21 @@
         }
 
         var noteEl = card.querySelector('[data-note]');
-        if (panel.samples.length === 0) {
-          noteEl.textContent = 'No samples available yet for this panel.';
-          return;
-        }
+        var bucketPrefix = selectedBucket === bucketFilterAllValue ? '' : 'Bucket filter le=' + selectedBucket + '. ';
 
         var datasets = [];
-        var plotted = Math.min(panel.samples.length, chartSeriesLimit);
+        var plotted = Math.min(panelSamples.length, chartSeriesLimit);
         for (var k = 0; k < plotted; k++) {
-          var plottedSample = panel.samples[k];
+          var plottedSample = panelSamples[k];
           var seriesKey = buildSeriesKey(plottedSample.metricName, plottedSample.labels);
           var seriesLabel = buildSeriesLabel(plottedSample.metricName, plottedSample.labels);
           datasets.push(createDataset(seriesLabel, seriesKey, k));
         }
 
-        if (panel.samples.length > plotted) {
-          noteEl.textContent = 'Chart shows first ' + plotted + ' series (of ' + panel.samples.length + '). Expand table to view all series.';
+        if (panelSamples.length > plotted) {
+          noteEl.textContent = bucketPrefix + 'Chart shows first ' + plotted + ' series (of ' + panelSamples.length + '). Expand table to view all series.';
         } else {
-          noteEl.textContent = 'Chart shows all ' + panel.samples.length + ' series.';
+          noteEl.textContent = bucketPrefix + 'Chart shows all ' + panelSamples.length + ' series.';
         }
 
         var canvas = card.querySelector('canvas');
@@ -738,6 +1025,7 @@
         });
 
         familyCharts.set(panel.key, chart);
+        return panelSamples.length;
       }
 
       function renderFamilies(families) {
@@ -745,30 +1033,60 @@
         grid.innerHTML = '';
 
         var filter = filterInput.value.trim().toLowerCase();
+        var selectedBucket = bucketSelector.value || bucketFilterAllValue;
         var shownPanels = 0;
         var shownSeries = 0;
+        var renderedPanelKeys = new Set();
+        var renderedPanelTitles = new Map();
 
         for (var i = 0; i < families.length; i++) {
           var family = families[i];
           var panels = splitFamilyIntoPanels(family);
           for (var j = 0; j < panels.length; j++) {
             var panel = panels[j];
+            if (expandedPanelKey && expandedPanelKey !== panel.key) {
+              continue;
+            }
             var panelHaystack = (panel.title + ' ' + panel.help + ' ' + panel.splitFieldLabel).toLowerCase();
             if (filter && panelHaystack.indexOf(filter) === -1) {
               continue;
             }
 
+            var renderedSeries = renderPanel(panel, selectedBucket);
+            if (renderedSeries === 0) {
+              continue;
+            }
+
             shownPanels++;
-            shownSeries += panel.samples.length;
-            renderPanel(panel);
+            shownSeries += renderedSeries;
+            renderedPanelKeys.add(panel.key);
+            renderedPanelTitles.set(panel.key, panel.title);
           }
         }
 
-        counts.textContent = 'Showing ' + shownPanels + ' panels / ' + shownSeries + ' series';
+        panelTitleByKey = renderedPanelTitles;
+        if (selectedPanelKey && !renderedPanelKeys.has(selectedPanelKey)) {
+          selectedPanelKey = '';
+        }
+        if (expandedPanelKey && !renderedPanelKeys.has(expandedPanelKey)) {
+          expandedPanelKey = '';
+        }
+
+        if (expandedPanelKey) {
+          grid.classList.add('grid-focus');
+        } else {
+          grid.classList.remove('grid-focus');
+        }
+
+        var bucketText = selectedBucket === bucketFilterAllValue ? 'all buckets' : ('bucket le=' + selectedBucket);
+        counts.textContent = 'Showing ' + shownPanels + ' panels / ' + shownSeries + ' series (' + bucketText + ')';
 
         if (shownPanels === 0) {
           grid.innerHTML = '<div class="empty">No metrics matched the current filter.</div>';
         }
+
+        updateSelectedPanelStatusText();
+        updateExpandSelectedButton();
       }
 
       async function fetchAndRender() {
@@ -786,9 +1104,10 @@
           }
 
           var body = await response.text();
-          var families = parsePrometheusText(body);
-          updateHistory(families);
-          renderFamilies(families);
+          latestFamilies = parsePrometheusText(body);
+          updateHistory(latestFamilies);
+          updateBucketSelectorOptions(latestFamilies);
+          renderFamilies(latestFamilies);
 
           statusText.textContent = 'OK';
           statusText.classList.remove('warn');
@@ -825,6 +1144,32 @@
       refreshBtn.addEventListener('click', function () {
         fetchAndRender();
       });
+
+      expandSelectedBtn.addEventListener('click', function () {
+        if (expandedPanelKey) {
+          expandedPanelKey = '';
+          renderFamilies(latestFamilies);
+          return;
+        }
+
+        if (!selectedPanelKey) {
+          statusText.textContent = 'Select a panel first, then click Expand selected.';
+          statusText.classList.add('warn');
+          updateExpandSelectedButton();
+          return;
+        }
+
+        expandedPanelKey = selectedPanelKey;
+        statusText.classList.remove('warn');
+        renderFamilies(latestFamilies);
+      });
+
+      bucketSelector.addEventListener('change', function () {
+        renderFamilies(latestFamilies);
+      });
+
+      updateSelectedPanelStatusText();
+      updateExpandSelectedButton();
 
       schedulePolling();
       fetchAndRender();
