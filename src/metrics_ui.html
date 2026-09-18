@@ -869,13 +869,15 @@
       }
 
       function createDatasetFromPoints(seriesLabel, points, index) {
+        var hasFewPoints = points.length <= 1;
         return {
           label: seriesLabel,
           data: points,
           borderColor: chartPalette[index % chartPalette.length],
           backgroundColor: chartPalette[index % chartPalette.length],
           borderWidth: 1.5,
-          pointRadius: 0,
+          pointRadius: hasFewPoints ? 3 : 0,
+          pointHoverRadius: hasFewPoints ? 4 : 3,
           tension: 0.2,
           parsing: false
         };
@@ -938,6 +940,7 @@
           var countHistory = seriesHistory.get(components.countKey) || [];
           var pointCount = Math.min(sumHistory.length, countHistory.length);
           var averagePoints = [];
+          var cumulativeAveragePoints = [];
 
           for (var pointIndex = 1; pointIndex < pointCount; pointIndex++) {
             var histogramReset = countHistory[pointIndex].y < countHistory[pointIndex - 1].y;
@@ -959,15 +962,42 @@
             });
           }
 
+          for (var cumulativeIndex = 0; cumulativeIndex < pointCount; cumulativeIndex++) {
+            var countValue = countHistory[cumulativeIndex].y;
+            if (countValue <= 0) {
+              continue;
+            }
+            cumulativeAveragePoints.push({
+              x: countHistory[cumulativeIndex].x,
+              y: sumHistory[cumulativeIndex].y / countValue
+            });
+          }
+
+          var pointsToPlot = averagePoints;
+          var labelPrefix = 'Average duration';
+          if (pointsToPlot.length === 0) {
+            pointsToPlot = cumulativeAveragePoints;
+            labelPrefix = 'Average duration (cumulative fallback)';
+          }
+
           datasets.push(
             createDatasetFromPoints(
-              'Average duration ' + (labelsKey || '{}'),
-              averagePoints,
+              labelPrefix + ' ' + (labelsKey || '{}'),
+              pointsToPlot,
               datasets.length
             )
           );
         }
         return datasets;
+      }
+
+      function hasVisibleDataPoints(datasets) {
+        for (var i = 0; i < datasets.length; i++) {
+          if ((datasets[i].data || []).length > 0) {
+            return true;
+          }
+        }
+        return false;
       }
 
       function buildHistogramBucketDeltaDatasets(samples) {
@@ -1393,9 +1423,9 @@
         if (histogramPanel && selectedBucket === bucketFilterAllValue) {
           datasets = buildHistogramAverageDatasets(panelSamples);
           chartYAxisTitle = 'Duration (seconds)';
-          noteEl.textContent = datasets.length === 0 || datasets[0].data.length === 0
-            ? 'Waiting for two refreshes to calculate interval average duration.'
-            : 'Chart shows interval average duration (delta sum / delta count). Raw cumulative histogram series remain in the table.';
+          noteEl.textContent = hasVisibleDataPoints(datasets)
+            ? 'Chart shows interval average duration (delta sum / delta count). When no new observations occur, it falls back to cumulative average so low-frequency functions remain visible. Raw cumulative histogram series remain in the table.'
+            : 'Waiting for enough observations to calculate duration averages.';
         } else if (histogramPanel) {
           datasets = buildHistogramBucketDeltaDatasets(panelSamples);
           chartYAxisTitle = 'Observations per refresh';

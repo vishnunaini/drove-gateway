@@ -35,6 +35,9 @@ func TestMetricsUIHandler(t *testing.T) {
 	if !strings.Contains(body, "delta sum / delta count") {
 		t.Fatalf("body does not contain interval histogram calculation")
 	}
+	if !strings.Contains(body, "cumulative average") {
+		t.Fatalf("body does not contain cumulative fallback average message")
+	}
 	if !strings.Contains(body, "data-panel-action=\"span-inc\"") {
 		t.Fatalf("body does not contain width expand indicator control")
 	}
