@@ -35,11 +35,11 @@ func TestMetricsUIHandler(t *testing.T) {
 	if !strings.Contains(body, "delta sum / delta count") {
 		t.Fatalf("body does not contain interval histogram calculation")
 	}
-	if !strings.Contains(body, "data-panel-slider=\"span\"") {
-		t.Fatalf("body does not contain width slider control")
+	if !strings.Contains(body, "data-panel-action=\"span-inc\"") {
+		t.Fatalf("body does not contain width expand indicator control")
 	}
-	if !strings.Contains(body, "data-panel-slider=\"height\"") {
-		t.Fatalf("body does not contain height slider control")
+	if !strings.Contains(body, "data-panel-action=\"height-inc\"") {
+		t.Fatalf("body does not contain height expand indicator control")
 	}
 	if !strings.Contains(body, "series-table-wrap") {
 		t.Fatalf("body does not contain internal series table scroll wrapper")

@@ -197,7 +197,7 @@
       margin: 0 0 8px 0;
     }
 
-    .panel-tools .slider-control {
+    .panel-tools .indicator-group {
       display: inline-flex;
       align-items: center;
       gap: 4px;
@@ -205,15 +205,26 @@
       color: var(--muted);
     }
 
-    .panel-tools .slider-control span {
+    .panel-tools .indicator-group span {
       font-weight: 600;
       min-width: 10px;
     }
 
-    .panel-tools .slider-control input[type="range"] {
-      width: 82px;
-      margin: 0;
-      accent-color: var(--accent);
+    .panel-tools .indicator-group button {
+      width: 20px;
+      height: 20px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      font-size: 12px;
+      line-height: 1;
+      padding: 0;
+      cursor: pointer;
+    }
+
+    .panel-tools .indicator-group button:hover {
+      background: #f8fafc;
     }
 
     .canvas-wrap {
@@ -1266,10 +1277,6 @@
         }
 
         var detailsOpenAttr = panelSeriesDetailsOpenState.get(panel.key) ? ' open' : '';
-        var spanSliderValue = panelSpanOrder.indexOf(panelLayout.span);
-        if (spanSliderValue < 0) {
-          spanSliderValue = 0;
-        }
 
         var titleHtml = '' +
           '<div class="title-row">' +
@@ -1278,14 +1285,16 @@
           '</div>' +
           '<p class="metric-help">' + escapeHtml(helpText) + '</p>' +
           '<div class="panel-tools">' +
-          '  <label class="slider-control" title="Panel width">' +
+          '  <div class="indicator-group" title="Panel width">' +
           '    <span>W</span>' +
-          '    <input type="range" min="0" max="2" step="1" value="' + spanSliderValue + '" data-panel-slider="span">' +
-          '  </label>' +
-          '  <label class="slider-control" title="Chart height">' +
+          '    <button type="button" data-panel-action="span-dec" aria-label="Decrease panel width">&lsaquo;</button>' +
+          '    <button type="button" data-panel-action="span-inc" aria-label="Increase panel width">&rsaquo;</button>' +
+          '  </div>' +
+          '  <div class="indicator-group" title="Chart height">' +
           '    <span>H</span>' +
-          '    <input type="range" min="' + panelMinHeightPx + '" max="' + panelMaxHeightPx + '" step="' + panelHeightStepPx + '" value="' + panelLayout.heightPx + '" data-panel-slider="height">' +
-          '  </label>' +
+          '    <button type="button" data-panel-action="height-dec" aria-label="Decrease chart height">v</button>' +
+          '    <button type="button" data-panel-action="height-inc" aria-label="Increase chart height">^</button>' +
+          '  </div>' +
           '</div>' +
           '<div class="canvas-wrap"><canvas></canvas></div>' +
           '<div class="small-note" data-note></div>' +
@@ -1341,29 +1350,20 @@
           renderFamilies(latestFamilies);
         });
 
-        var spanSlider = card.querySelector('[data-panel-slider="span"]');
-        if (spanSlider) {
-          spanSlider.addEventListener('input', function (event) {
+        var panelToolButtons = card.querySelectorAll('[data-panel-action]');
+        for (var toolIndex = 0; toolIndex < panelToolButtons.length; toolIndex++) {
+          panelToolButtons[toolIndex].addEventListener('click', function (event) {
             event.stopPropagation();
-            var nextIndex = Number(spanSlider.value);
-            if (!Number.isFinite(nextIndex)) {
-              nextIndex = 0;
+            var action = event.currentTarget.getAttribute('data-panel-action');
+            if (action === 'span-dec') {
+              adjustPanelSpan(panel.key, -1);
+            } else if (action === 'span-inc') {
+              adjustPanelSpan(panel.key, 1);
+            } else if (action === 'height-dec') {
+              adjustPanelHeight(panel.key, -panelHeightStepPx);
+            } else if (action === 'height-inc') {
+              adjustPanelHeight(panel.key, panelHeightStepPx);
             }
-            nextIndex = clamp(Math.floor(nextIndex), 0, panelSpanOrder.length - 1);
-            panelLayout.span = panelSpanOrder[nextIndex];
-            renderFamilies(latestFamilies);
-          });
-        }
-
-        var heightSlider = card.querySelector('[data-panel-slider="height"]');
-        if (heightSlider) {
-          heightSlider.addEventListener('input', function (event) {
-            event.stopPropagation();
-            var nextHeight = Number(heightSlider.value);
-            if (!Number.isFinite(nextHeight)) {
-              nextHeight = panelLayout.heightPx;
-            }
-            panelLayout.heightPx = clamp(nextHeight, panelMinHeightPx, panelMaxHeightPx);
             renderFamilies(latestFamilies);
           });
         }
