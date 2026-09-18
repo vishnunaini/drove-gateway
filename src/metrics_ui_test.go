@@ -41,6 +41,15 @@ func TestMetricsUIHandler(t *testing.T) {
 	if !strings.Contains(body, "data-panel-action=\"height-inc\"") {
 		t.Fatalf("body does not contain height expand indicator control")
 	}
+	if !strings.Contains(body, "&#8249;") || !strings.Contains(body, "&#8250;") {
+		t.Fatalf("body does not contain width chevron glyph controls")
+	}
+	if !strings.Contains(body, "&#9662;") || !strings.Contains(body, "&#9652;") {
+		t.Fatalf("body does not contain height caret glyph controls")
+	}
+	if strings.Contains(body, "data-panel-slider") {
+		t.Fatalf("body unexpectedly contains old slider controls")
+	}
 	if !strings.Contains(body, "series-table-wrap") {
 		t.Fatalf("body does not contain internal series table scroll wrapper")
 	}
