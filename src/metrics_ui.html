@@ -287,7 +287,7 @@
 <body>
   <header>
     <h1>Drove Gateway Metrics UI</h1>
-    <div class="sub">Client-side parser for Prometheus text format from <code>/v1/metrics</code>.</div>
+    <div class="sub">Client-side parser for Prometheus/OpenMetrics text from <code>/v1/metrics</code>. Native/sparse histograms are visualized through classic compatibility series.</div>
     <div class="controls">
       <label>
         Refresh (seconds)
@@ -315,6 +315,7 @@
     <div class="status">
       <span id="statusText">Waiting for first fetch...</span>
       <span id="lastUpdated"></span>
+      <span id="formatText"></span>
       <span id="counts"></span>
       <span id="selectedPanelText">No panel selected</span>
     </div>
@@ -339,6 +340,7 @@
       var expandSelectedBtn = document.getElementById('expandSelectedBtn');
       var statusText = document.getElementById('statusText');
       var lastUpdated = document.getElementById('lastUpdated');
+      var formatText = document.getElementById('formatText');
       var counts = document.getElementById('counts');
       var selectedPanelText = document.getElementById('selectedPanelText');
       var grid = document.getElementById('metricsGrid');
@@ -359,6 +361,12 @@
       var functionLabelKey = 'function';
       var bucketLabelKey = 'le';
       var bucketFilterAllValue = '__all__';
+      var histogramSuffixBucket = '_bucket';
+      var histogramSuffixCount = '_count';
+      var histogramSuffixSum = '_sum';
+      var histogramSuffixCreated = '_created';
+      var histogramSuffixGaugeCount = '_gcount';
+      var histogramSuffixGaugeSum = '_gsum';
       var latestFamilies = [];
       var panelLayoutState = new Map();
       var selectedPanelKey = '';
@@ -368,6 +376,8 @@
       var panelMaxHeightPx = 920;
       var panelSpanOrder = ['1', '2', 'full'];
       var panelTitleByKey = new Map();
+      var metricsAcceptHeader = 'application/openmetrics-text; version=1.0.0; charset=utf-8, text/plain; version=0.0.4; q=0.9, */*; q=0.1';
+      var latestRenderToken = 0;
 
       function schedulePolling() {
         if (pollTimer !== null) {
@@ -391,6 +401,25 @@
 
       function clamp(value, min, max) {
         return Math.min(max, Math.max(min, value));
+      }
+
+      function getWindowScrollTop() {
+        if (typeof window.pageYOffset === 'number') {
+          return window.pageYOffset;
+        }
+        if (document.documentElement && typeof document.documentElement.scrollTop === 'number') {
+          return document.documentElement.scrollTop;
+        }
+        return 0;
+      }
+
+      function restoreWindowScrollTop(offsetY, renderToken) {
+        window.requestAnimationFrame(function () {
+          if (renderToken !== latestRenderToken) {
+            return;
+          }
+          window.scrollTo(0, Math.max(0, Number(offsetY) || 0));
+        });
       }
 
       function getPanelLayout(panelKey) {
@@ -564,7 +593,14 @@
         if (familiesMap.has(metricName)) {
           return metricName;
         }
-        var suffixes = ['_bucket', '_sum', '_count', '_created'];
+        var suffixes = [
+          histogramSuffixBucket,
+          histogramSuffixSum,
+          histogramSuffixCount,
+          histogramSuffixCreated,
+          histogramSuffixGaugeSum,
+          histogramSuffixGaugeCount
+        ];
         for (var i = 0; i < suffixes.length; i++) {
           var suffix = suffixes[i];
           if (metricName.endsWith(suffix)) {
@@ -575,6 +611,59 @@
           }
         }
         return metricName;
+      }
+
+      function isTextMetricsContentType(contentType) {
+        var lower = String(contentType || '').toLowerCase();
+        return lower.indexOf('text/plain') !== -1 || lower.indexOf('application/openmetrics-text') !== -1;
+      }
+
+      function isProtobufMetricsContentType(contentType) {
+        var lower = String(contentType || '').toLowerCase();
+        return lower.indexOf('application/vnd.google.protobuf') !== -1 || lower.indexOf('application/openmetrics-protobuf') !== -1;
+      }
+
+      function countHistogramFamiliesWithoutBuckets(families) {
+        var count = 0;
+        for (var i = 0; i < families.length; i++) {
+          var family = families[i];
+          if (!isHistogramFamily(family)) {
+            continue;
+          }
+          var hasClassicBucketSeries = false;
+          for (var j = 0; j < family.samples.length; j++) {
+            var sample = family.samples[j];
+            if (isBucketSample(sample)) {
+              hasClassicBucketSeries = true;
+              break;
+            }
+          }
+          if (!hasClassicBucketSeries) {
+            count++;
+          }
+        }
+        return count;
+      }
+
+      function updateFormatStatus(contentType, families) {
+        if (!formatText) {
+          return;
+        }
+        var baseType = String(contentType || '').split(';')[0] || 'unknown';
+        var hints = ['Format: ' + baseType];
+
+        if (isTextMetricsContentType(contentType)) {
+          hints.push('Native/sparse histograms are shown via classic _bucket compatibility series.');
+        }
+
+        var histogramWithoutBuckets = countHistogramFamiliesWithoutBuckets(families);
+        if (histogramWithoutBuckets > 0) {
+          hints.push(
+            'Detected ' + histogramWithoutBuckets + ' histogram family without classic buckets; native-only protobuf histograms cannot be expanded in this page.'
+          );
+        }
+
+        formatText.textContent = hints.join(' | ');
       }
 
       function parsePrometheusText(text) {
@@ -593,7 +682,8 @@
           return familiesMap.get(name);
         }
 
-        var metricLinePattern = /^([a-zA-Z_:][a-zA-Z0-9_:]*)(\{[^}]*\})?\s+([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?|NaN|\+Inf|-Inf)(?:\s+\d+)?$/;
+        var numberPattern = '(?:[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?|NaN|\\+Inf|-Inf)';
+        var metricLinePattern = new RegExp('^([a-zA-Z_:][a-zA-Z0-9_:]*)(\\{[^}]*\\})?\\s+(' + numberPattern + ')(?:\\s+' + numberPattern + ')?$', 'i');
 
         for (var i = 0; i < lines.length; i++) {
           var rawLine = lines[i];
@@ -627,7 +717,15 @@
             continue;
           }
 
-          var match = line.match(metricLinePattern);
+          // OpenMetrics can append exemplar payloads as: "# {...} <ts>".
+          // Strip that tail so classic sample parsing remains compatible.
+          var sampleLine = line;
+          var exemplarDelimiter = sampleLine.indexOf(' # ');
+          if (exemplarDelimiter !== -1) {
+            sampleLine = sampleLine.slice(0, exemplarDelimiter).trim();
+          }
+
+          var match = sampleLine.match(metricLinePattern);
           if (!match) {
             continue;
           }
@@ -657,7 +755,7 @@
 
         for (var j = 0; j < families.length; j++) {
           families[j].samples.sort(function (a, b) {
-            return buildSeriesKey(a.metricName, a.labels).localeCompare(buildSeriesKey(b.metricName, b.labels));
+            return compareSamplesForDisplay(a, b);
           });
         }
 
@@ -741,7 +839,11 @@
 
       function splitFamilyIntoPanels(family) {
         if (family.name !== functionDurationFamilyName) {
-          return [buildPanelDefinition(family, family.name, family.name, family.samples, '')];
+          if (!isHistogramFamily(family)) {
+            return [buildPanelDefinition(family, family.name, family.name, family.samples, '')];
+          }
+
+          return splitHistogramFamilyIntoPanels(family);
         }
 
         var groupedByFunction = new Map();
@@ -776,11 +878,132 @@
         return panels;
       }
 
+      function endsWithAny(value, suffixes) {
+        for (var i = 0; i < suffixes.length; i++) {
+          if (value.endsWith(suffixes[i])) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function isHistogramFamily(family) {
+        if ((family.type || '').toLowerCase() === 'histogram') {
+          return true;
+        }
+        for (var i = 0; i < family.samples.length; i++) {
+          var sample = family.samples[i];
+          if (sample.metricName.endsWith(histogramSuffixBucket) && Object.prototype.hasOwnProperty.call(sample.labels, bucketLabelKey)) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function labelsToStringExcluding(labels, excludedKeys) {
+        var excluded = new Set(excludedKeys || []);
+        var keys = Object.keys(labels).filter(function (key) {
+          return !excluded.has(key);
+        }).sort();
+        if (keys.length === 0) {
+          return '';
+        }
+        var parts = [];
+        for (var i = 0; i < keys.length; i++) {
+          var key = keys[i];
+          parts.push(key + '="' + labels[key] + '"');
+        }
+        return '{' + parts.join(',') + '}';
+      }
+
+      function histogramPanelLabelsForSample(sample) {
+        if (isBucketSample(sample)) {
+          return labelsToStringExcluding(sample.labels, [bucketLabelKey]);
+        }
+        return labelsToString(sample.labels);
+      }
+
+      function splitHistogramFamilyIntoPanels(family) {
+        var groups = new Map();
+        for (var i = 0; i < family.samples.length; i++) {
+          var sample = family.samples[i];
+          var labelGroup = histogramPanelLabelsForSample(sample);
+          if (!groups.has(labelGroup)) {
+            groups.set(labelGroup, []);
+          }
+          groups.get(labelGroup).push(sample);
+        }
+
+        if (groups.size === 0) {
+          return [buildPanelDefinition(family, family.name, family.name, family.samples, '')];
+        }
+
+        var labelGroups = Array.from(groups.keys()).sort();
+        var panels = [];
+        for (var j = 0; j < labelGroups.length; j++) {
+          var labelGroup = labelGroups[j];
+          var splitFieldLabel = labelGroup ? labelGroup.slice(1, -1) : '';
+          var titleSuffix = labelGroup ? ' [' + splitFieldLabel + ']' : '';
+          panels.push(
+            buildPanelDefinition(
+              family,
+              family.name + titleSuffix,
+              family.name + '|' + (splitFieldLabel || 'all'),
+              groups.get(labelGroup),
+              splitFieldLabel
+            )
+          );
+        }
+        return panels;
+      }
+
+      function sampleSortWeight(metricName) {
+        if (metricName.endsWith(histogramSuffixBucket)) {
+          return 0;
+        }
+        if (endsWithAny(metricName, [histogramSuffixCount, histogramSuffixGaugeCount])) {
+          return 1;
+        }
+        if (endsWithAny(metricName, [histogramSuffixSum, histogramSuffixGaugeSum])) {
+          return 2;
+        }
+        if (metricName.endsWith(histogramSuffixCreated)) {
+          return 3;
+        }
+        return 4;
+      }
+
+      function compareSamplesForDisplay(left, right) {
+        var leftWeight = sampleSortWeight(left.metricName);
+        var rightWeight = sampleSortWeight(right.metricName);
+        if (leftWeight !== rightWeight) {
+          return leftWeight - rightWeight;
+        }
+
+        if (isBucketSample(left) && isBucketSample(right)) {
+          var leftGroup = labelsToStringExcluding(left.labels, [bucketLabelKey]);
+          var rightGroup = labelsToStringExcluding(right.labels, [bucketLabelKey]);
+          if (leftGroup !== rightGroup) {
+            return leftGroup.localeCompare(rightGroup);
+          }
+
+          var leCmp = compareBucketValues(left.labels[bucketLabelKey], right.labels[bucketLabelKey]);
+          if (!Number.isNaN(leCmp) && leCmp !== 0) {
+            return leCmp;
+          }
+        }
+
+        if (left.metricName !== right.metricName) {
+          return left.metricName.localeCompare(right.metricName);
+        }
+        return buildSeriesKey(left.metricName, left.labels).localeCompare(buildSeriesKey(right.metricName, right.labels));
+      }
+
       function isBucketSample(sample) {
         if (!sample || !sample.metricName || !sample.labels) {
           return false;
         }
-        return sample.metricName.endsWith('_bucket') && Object.prototype.hasOwnProperty.call(sample.labels, bucketLabelKey);
+        return sample.metricName.endsWith(histogramSuffixBucket) && Object.prototype.hasOwnProperty.call(sample.labels, bucketLabelKey);
       }
 
       function parseBucketValue(rawValue) {
@@ -799,6 +1022,9 @@
         var rightNumber = parseBucketValue(right);
 
         if (leftNumber !== null && rightNumber !== null) {
+          if (!Number.isFinite(leftNumber) && !Number.isFinite(rightNumber)) {
+            return 0;
+          }
           return leftNumber - rightNumber;
         }
         if (leftNumber !== null) {
@@ -1029,6 +1255,10 @@
       }
 
       function renderFamilies(families) {
+        var scrollTopBeforeRender = getWindowScrollTop();
+        latestRenderToken += 1;
+        var renderToken = latestRenderToken;
+
         clearCharts();
         grid.innerHTML = '';
 
@@ -1087,6 +1317,7 @@
 
         updateSelectedPanelStatusText();
         updateExpandSelectedButton();
+        restoreWindowScrollTop(scrollTopBeforeRender, renderToken);
       }
 
       async function fetchAndRender() {
@@ -1098,9 +1329,21 @@
         statusText.classList.remove('warn');
 
         try {
-          var response = await fetch(METRICS_PATH, { cache: 'no-store' });
+          var response = await fetch(METRICS_PATH, {
+            cache: 'no-store',
+            headers: {
+              'Accept': metricsAcceptHeader
+            }
+          });
           if (!response.ok) {
             throw new Error('HTTP ' + response.status + ' from ' + METRICS_PATH);
+          }
+
+          var contentType = response.headers.get('Content-Type') || '';
+          if (isProtobufMetricsContentType(contentType)) {
+            throw new Error(
+              'received protobuf metrics (' + contentType + '); this browser page supports text exposition only'
+            );
           }
 
           var body = await response.text();
@@ -1108,6 +1351,7 @@
           updateHistory(latestFamilies);
           updateBucketSelectorOptions(latestFamilies);
           renderFamilies(latestFamilies);
+          updateFormatStatus(contentType, latestFamilies);
 
           statusText.textContent = 'OK';
           statusText.classList.remove('warn');
@@ -1115,6 +1359,9 @@
         } catch (error) {
           statusText.textContent = 'Failed to fetch metrics: ' + error.message;
           statusText.classList.add('warn');
+          if (formatText) {
+            formatText.textContent = '';
+          }
         } finally {
           fetchInFlight = false;
         }

@@ -29,4 +29,7 @@ func TestMetricsUIHandler(t *testing.T) {
 	if !strings.Contains(body, "Drove Gateway Metrics UI") {
 		t.Fatalf("body does not contain page title")
 	}
+	if !strings.Contains(body, "Native/sparse histograms") {
+		t.Fatalf("body does not contain native histogram compatibility note")
+	}
 }
