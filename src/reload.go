@@ -537,19 +537,19 @@ func reloadWorker() {
 		// Keep at most one pending reconcile trigger locally so we do not drain the queue while
 		// proxy restart is in progress.
 		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
 		pendingReconcile := false
-		unresponsiveSince := time.Time{}
 		thresholdBreached := false
+		forcedRestartRecovery := false
 		for range ticker.C {
 			// If proxy restart is in progress, wait until proxy control-plane is reachable before
 			// consuming queued reconcile events. This avoids losing events to failed reconciles.
-			if proxyRestartInProgress.Load() {
+			restartInProgress, restartStartedAt := getProxyRestartState()
+			if restartInProgress {
 				if GlobalProxyManager == nil || !GlobalProxyManager.IsControlPlaneResponsive() {
-					if unresponsiveSince.IsZero() {
-						unresponsiveSince = time.Now()
-					}
-					unresponsiveFor := time.Since(unresponsiveSince)
+					unresponsiveFor := time.Since(restartStartedAt)
 					timeout := time.Duration(config.ProxyControlPlaneTimeoutSec) * time.Second
+					maxDuration := time.Duration(config.ProxyRestartMaxDurationSec) * time.Second
 					if unresponsiveFor > timeout {
 						msg := fmt.Sprintf("proxy control-plane unresponsive for %s (timeout=%s)", unresponsiveFor.Truncate(time.Second), timeout)
 						updateHealthSection("ProxyControlPlane", false, msg)
@@ -559,14 +559,26 @@ func reloadWorker() {
 							thresholdBreached = true
 						}
 					}
-					logger.Debug("Proxy restart in progress and control-plane not responsive yet; deferring reconciliation")
-					continue
+					if unresponsiveFor >= maxDuration {
+						if !clearProxyRestart(restartStartedAt) {
+							continue
+						}
+						pendingReconcile = true
+						forcedRestartRecovery = true
+						thresholdBreached = false
+						msg := fmt.Sprintf("proxy restart gate force-cleared after %s; reconciliation will retry until the control plane recovers", maxDuration)
+						updateHealthSection("ProxyControlPlane", false, msg)
+						logger.WithField("max_duration", maxDuration).Error("Proxy restart exceeded maximum duration; force-clearing restart gate")
+					} else {
+						logger.Debug("Proxy restart in progress and control-plane not responsive yet; deferring reconciliation")
+						continue
+					}
+				} else if clearProxyRestart(restartStartedAt) {
+					thresholdBreached = false
+					forcedRestartRecovery = false
+					updateHealthSection("ProxyControlPlane", true, "OK")
+					logger.Info("Proxy control-plane is responsive again; resuming reconciliation processing")
 				}
-				proxyRestartInProgress.Store(false)
-				unresponsiveSince = time.Time{}
-				thresholdBreached = false
-				updateHealthSection("ProxyControlPlane", true, "OK")
-				logger.Info("Proxy control-plane is responsive again; resuming reconciliation processing")
 			}
 
 			if !pendingReconcile {
@@ -580,7 +592,7 @@ func reloadWorker() {
 
 			// SIGUSR1 may arrive between the earlier readiness check and this point.
 			// Preserve the pending reconcile and retry once the proxy is responsive again.
-			if proxyRestartInProgress.Load() {
+			if restartInProgress, _ := getProxyRestartState(); restartInProgress {
 				continue
 			}
 
@@ -589,6 +601,11 @@ func reloadWorker() {
 				continue
 			}
 			pendingReconcile = false
+			if forcedRestartRecovery {
+				forcedRestartRecovery = false
+				updateHealthSection("ProxyControlPlane", true, "OK")
+				logger.Info("Proxy control-plane recovered after forced restart gate clear")
+			}
 		}
 	}()
 }

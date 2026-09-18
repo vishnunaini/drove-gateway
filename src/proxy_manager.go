@@ -64,7 +64,8 @@ func (pmgr *NginxProxyManager) IsRuntimeAPIUpstreamUpdateEnabled() bool {
 func (pmgr *NginxProxyManager) IsControlPlaneResponsive() bool {
 	// NGINX Plus runtime API mode: wait until the API socket is reachable.
 	if pmgr.config.Nginxplusapiaddr != "" {
-		conn, err := net.DialTimeout("tcp", pmgr.config.Nginxplusapiaddr, 500*time.Millisecond)
+		timeout := time.Duration(pmgr.config.ProxyControlPlaneDialTimeoutMS) * time.Millisecond
+		conn, err := net.DialTimeout("tcp", pmgr.config.Nginxplusapiaddr, timeout)
 		if err != nil {
 			return false
 		}
@@ -146,8 +147,9 @@ func (pmgr *HAProxyManager) IsControlPlaneResponsive() bool {
 	if pmgr.config.HaproxySocketAddr == "" {
 		return false
 	}
+	timeout := time.Duration(pmgr.config.ProxyControlPlaneDialTimeoutMS) * time.Millisecond
 	if IsUnixSocketAddr(pmgr.config.HaproxySocketAddr) {
-		conn, err := net.DialTimeout("unix", pmgr.config.HaproxySocketAddr, 500*time.Millisecond)
+		conn, err := net.DialTimeout("unix", pmgr.config.HaproxySocketAddr, timeout)
 		if err != nil {
 			return false
 		}
@@ -155,7 +157,7 @@ func (pmgr *HAProxyManager) IsControlPlaneResponsive() bool {
 		return true
 	}
 	addr := strings.TrimPrefix(strings.TrimPrefix(pmgr.config.HaproxySocketAddr, "ipv4@"), "ipv6@")
-	conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return false
 	}

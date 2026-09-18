@@ -13,6 +13,10 @@ xproxy = ""
 # If unresponsive longer than this, /v1/health reports ProxyControlPlane unhealthy.
 #proxy_control_plane_timeout_sec = 30
 
+# Maximum time to block reconciliation for a proxy restart (seconds).
+# Defaults to 2x proxy_control_plane_timeout_sec, then force-clears the restart gate and retries.
+#proxy_restart_max_duration_sec = 60
+
 # On startup, make this many fresh-sync attempts before falling back to
 # persisted datamanager state for controller-unreachable namespaces.
 #startup_controller_sync_tries = 2

@@ -12,7 +12,6 @@ import (
 	"os/signal"
 	"regexp"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -110,7 +109,9 @@ type Config struct {
 	NginxSlowStartUpstreamCompatibility         *string          `json:"-" toml:"slowstartupstream,omitempty"`
 	LogLevel                                    string           `json:"-" toml:"loglevel"`
 	DnsResolutionTimeoutSec                     int              `json:"-" toml:"dns_resolution_timeout_sec"`
+	ProxyControlPlaneDialTimeoutMS              int              `json:"-" toml:"proxy_control_plane_dial_timeout_ms"`
 	ProxyControlPlaneTimeoutSec                 int              `json:"-" toml:"proxy_control_plane_timeout_sec"`
+	ProxyRestartMaxDurationSec                  int              `json:"-" toml:"proxy_restart_max_duration_sec"`
 	DiskIOTimeoutSec                            int              `json:"-" toml:"disk_io_timeout_sec"`
 	StartupControllerSyncTries                  int              `json:"-" toml:"startup_controller_sync_tries"`
 	StartupControllerSyncRetryDelaySec          int              `json:"-" toml:"startup_controller_sync_retry_delay_sec"`
@@ -327,9 +328,15 @@ func setupDefaultConfig() {
 	if config.DnsResolutionTimeoutSec <= 0 {
 		config.DnsResolutionTimeoutSec = 2
 	}
+	if config.ProxyControlPlaneDialTimeoutMS <= 0 {
+		config.ProxyControlPlaneDialTimeoutMS = 500
+	}
 
 	if config.ProxyControlPlaneTimeoutSec <= 0 {
 		config.ProxyControlPlaneTimeoutSec = 30
+	}
+	if config.ProxyRestartMaxDurationSec <= 0 {
+		config.ProxyRestartMaxDurationSec = 2 * config.ProxyControlPlaneTimeoutSec
 	}
 
 	if config.DiskIOTimeoutSec <= 0 {
@@ -591,12 +598,88 @@ func (manager *HaproxyManager) Reconcile(data *RenderingData) error {
 	return manager.ReconcileAllBackends(data, config.HaproxyDisableLargeBackendCountOptimisation)
 }
 
-// proxyRestartInProgress tracks whether the managed proxy (HAProxy or NGINX) is currently
-// (re)starting, based on the signals sent by the proxy's systemd drop-in installed alongside
-// Drove Gateway.
-var proxyRestartInProgress atomic.Bool
+var proxyRestartState struct {
+	sync.RWMutex
+	inProgress bool
+	startedAt  time.Time
+}
 
-// setupSignalHandlers wires the OS signals used to coordinate with proxy (re)starts and reloads.
+func beginProxyRestart() bool {
+	proxyRestartState.Lock()
+	defer proxyRestartState.Unlock()
+	wasInProgress := proxyRestartState.inProgress
+	proxyRestartState.inProgress = true
+	proxyRestartState.startedAt = time.Now()
+	return wasInProgress
+}
+
+func getProxyRestartState() (bool, time.Time) {
+	proxyRestartState.RLock()
+	defer proxyRestartState.RUnlock()
+	return proxyRestartState.inProgress, proxyRestartState.startedAt
+}
+
+func clearProxyRestart(startedAt time.Time) bool {
+	proxyRestartState.Lock()
+	defer proxyRestartState.Unlock()
+	if !proxyRestartState.inProgress || proxyRestartState.startedAt != startedAt {
+		return false
+	}
+	proxyRestartState.inProgress = false
+	proxyRestartState.startedAt = time.Time{}
+	return true
+}
+
+func proxyRestartStarted(source string) {
+	beginProxyRestart()
+	logger.WithField("source", source).Warn("Proxy lifecycle transition in progress. Upstreams will be reconciled once the proxy is back up.")
+}
+
+func proxyRestartCompleted(source string) bool {
+	wasRestarting := beginProxyRestart()
+	logger.WithFields(logrus.Fields{
+		"source":                    source,
+		"proxy_restart_in_progress": wasRestarting,
+	}).Info("Proxy lifecycle transition complete. Triggering full reconciliation.")
+
+	appliedDataManagerState := applyDataManagerStateForOfflineReconcile()
+	if appliedDataManagerState {
+		logger.WithField("source", source).Info("Applied datamanager state snapshot for offline reconcile")
+	}
+
+	select {
+	case appsConfigUpdateSignalQueue <- true:
+		logger.WithField("source", source).Debug("Queued full reconciliation after proxy lifecycle transition")
+		return true
+	default:
+		logger.WithField("source", source).Debug("Reconciliation already queued; skipping duplicate trigger")
+		return false
+	}
+}
+
+func proxyRestartBeginAPI(w http.ResponseWriter, r *http.Request) {
+	proxyRestartStarted("api")
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = fmt.Fprintln(w, "proxy restart registered")
+}
+
+func proxyRestartCompleteAPI(w http.ResponseWriter, r *http.Request) {
+	queued := proxyRestartCompleted("api")
+	w.WriteHeader(http.StatusAccepted)
+	if queued {
+		_, _ = fmt.Fprintln(w, "reconciliation queued")
+		return
+	}
+	_, _ = fmt.Fprintln(w, "reconciliation already queued")
+}
+
+// Proxy lifecycle notifications can be delivered either through OS signals or the equivalent API:
+//
+//	SIGUSR1 -> POST /v1/proxy/restart/begin
+//	SIGUSR2 -> POST /v1/proxy/restart/complete
+//
+// Both transports invoke the same state transitions and may be used interchangeably.
+// setupSignalHandlers wires the signal transport used by the packaged systemd drop-ins.
 //
 // The haproxy.service / nginx.service systemd drop-ins shipped with Drove Gateway send:
 //   - SIGUSR1 from ExecStartPre / ExecReload: a proxy lifecycle transition is beginning; its runtime
@@ -614,28 +697,12 @@ func setupSignalHandlers() {
 		for sig := range sigCh {
 			switch sig {
 			case syscall.SIGUSR1:
-				proxyRestartInProgress.Store(true)
-				logger.Warn("Received SIGUSR1: proxy lifecycle transition in progress. Upstreams will be reconciled once the proxy is back up.")
+				proxyRestartStarted("SIGUSR1")
 			case syscall.SIGUSR2:
-				wasRestarting := proxyRestartInProgress.Load()
 				// Keep the gate set until reloadWorker confirms that the proxy control plane
 				// is responsive. SIGUSR2 means the service transition completed, but the
 				// runtime socket/API may not be ready to reconcile yet.
-				proxyRestartInProgress.Store(true)
-				logger.WithField("proxy_restart_in_progress", wasRestarting).Info("Received SIGUSR2: proxy lifecycle transition complete. Triggering full reconciliation.")
-				appliedDataManagerState := applyDataManagerStateForOfflineReconcile()
-				if appliedDataManagerState {
-					logger.Info("Applied datamanager state snapshot for offline reconcile")
-				}
-				// Non-blocking enqueue: reload() calls Reconcile, which re-adds all known servers
-				// via the runtime API (or re-renders and reloads the config). If a reconcile is
-				// already queued, this is a no-op.
-				select {
-				case appsConfigUpdateSignalQueue <- true:
-					logger.Debug("Queued full reconciliation after proxy lifecycle signal")
-				default:
-					logger.Debug("Reconciliation already queued; skipping duplicate trigger")
-				}
+				proxyRestartCompleted("SIGUSR2")
 			}
 		}
 	}()
@@ -696,6 +763,8 @@ func main() {
 	mux.HandleFunc("/v1/reload", nixyReload)
 	mux.HandleFunc("/v1/config", nixyConfig)
 	mux.HandleFunc("/v1/health", nixyHealth)
+	mux.HandleFunc("/v1/proxy/restart/begin", proxyRestartBeginAPI).Methods(http.MethodPost)
+	mux.HandleFunc("/v1/proxy/restart/complete", proxyRestartCompleteAPI).Methods(http.MethodPost)
 	mux.Handle("/v1/metrics", promhttp.Handler())
 	var s_tls *http.Server
 	var s *http.Server

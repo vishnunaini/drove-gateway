@@ -97,6 +97,14 @@ install -m 0644 src/rpmbuild/examples/nginx.service.d/10-drove-gateway-reconcile
 # Create nixy user if it doesn't exist (optional: currently runs as root)
 # getent passwd nixy > /dev/null || useradd -r -s /bin/false -d /var/lib/nixy nixy
 
+# Preserve the enabled state of the legacy service before package files are replaced.
+if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled nixy.service >/dev/null 2>&1; then
+    mkdir -p /var/lib/drove-gateway
+    touch /var/lib/drove-gateway/.nixy-was-enabled
+    rm -f /etc/systemd/system/nixy.service
+    rm -f /usr/lib/systemd/system/nixy.service
+fi
+
 %post
 # Ensure service is enabled on first install.
 if [ $1 -eq 1 ] && command -v systemctl >/dev/null 2>&1; then

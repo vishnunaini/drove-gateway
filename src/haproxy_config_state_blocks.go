@@ -116,6 +116,11 @@ func rewriteServerStateConfigBlocks(content string, serversByBackend map[string]
 		defer finishTimer()
 	}
 
+	lineEnding := "\n"
+	if strings.Contains(content, "\r\n") {
+		lineEnding = "\r\n"
+		content = strings.ReplaceAll(content, "\r\n", "\n")
+	}
 	lines := strings.Split(content, "\n")
 	out := make([]string, 0, len(lines))
 	blockCount = 0
@@ -170,7 +175,7 @@ func rewriteServerStateConfigBlocks(content string, serversByBackend map[string]
 		i = end
 	}
 
-	return strings.Join(out, "\n"), blockCount, nil
+	return strings.Join(out, lineEnding), blockCount, nil
 }
 
 // formatServerEndpoint returns a host:port endpoint suitable for HAProxy server lines.

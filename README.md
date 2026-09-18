@@ -95,6 +95,7 @@ The complete behavior of Nixy is governed by `nixy.toml`. Below is the complete 
 | `api_timeout` | integer | `10` | Timeout for Drove API calls. |
 | `dns_resolution_timeout_sec` | integer | `...` | Timeout in seconds for DNS resolution. DNS resolution is need as certain operations in nginx/haproxy api's do not accept hostname's for upstreams |
 | `event_refresh_interval_sec` | integer | `5` | Polling/refresh interval in seconds for Drove controller event streams. |
+| `proxy_restart_max_duration_sec` | integer | `2 * proxy_control_plane_timeout_sec` | Maximum time reconciliation remains gated for a proxy restart. When exceeded, Drove Gateway force-clears the restart gate and retries reconciliation until the proxy recovers. |
 | `startup_controller_sync_tries` | integer | `2` | On process startup, how many full fresh-sync attempts Drove Gateway makes before using stale persisted datamanager state for controller-unreachable namespaces. Each attempt uses existing per-controller API timeout behavior. |
 | `startup_controller_sync_retry_delay_sec` | integer | `1` | Fixed delay in seconds between startup fresh-sync retry attempts. Values `<= 0` default to `1`. |
 | `state_persistence_enabled` | boolean | `true` | Enables writing last successful reconciliation metadata to disk so restarts can reconcile from cached state if Drove is unavailable. In-memory datamanager state is always maintained. |

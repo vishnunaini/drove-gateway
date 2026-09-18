@@ -52,6 +52,18 @@ func writeFileAtomic(path string, content []byte, mode os.FileMode) (err error) 
 		return fmt.Errorf("failed to rename temp file %q to %q: %w", tmpPath, path, err)
 	}
 
+	dirFile, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("failed to open parent directory %q after renaming %q: %w", dir, path, err)
+	}
+	if err := dirFile.Sync(); err != nil {
+		_ = dirFile.Close()
+		return fmt.Errorf("failed to sync parent directory %q after renaming %q: %w", dir, path, err)
+	}
+	if err := dirFile.Close(); err != nil {
+		return fmt.Errorf("failed to close parent directory %q after renaming %q: %w", dir, path, err)
+	}
+
 	return nil
 }
 
