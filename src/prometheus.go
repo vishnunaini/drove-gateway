@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 const ns = "drove_gateway"
@@ -43,6 +44,9 @@ type DroveGatewayPrometheusMetrics struct {
 	HaproxyReconcileAllBackendsDuration   *prometheus.HistogramVec
 	NginxPlusReconcileAllBackendsDuration *prometheus.HistogramVec
 	TemplateRenderDuration                *prometheus.HistogramVec
+	// HistogramFunctionDuration is optional debug instrumentation. It remains nil unless
+	// debug_metrics_enabled is explicitly true, allowing call sites to skip timer/defer work.
+	HistogramFunctionDuration *prometheus.HistogramVec
 }
 
 func setupPrometheusMetrics() {
@@ -303,6 +307,24 @@ func setupPrometheusMetrics() {
 		},
 		[]string{"result"},
 	)
+	// Debug metrics are enabled explicitly with debug_metrics_enabled. When enabled, promauto
+	// registers a histogram that records instrumented function duration by function and result;
+	// proxy-specific functions are recorded only for the active proxy platform. When disabled, the
+	// histogram remains nil and timer helpers return without reading the clock. Label values must be
+	// fixed and bounded; never use application data or error messages as labels.
+	if debugMetricsEnabled() {
+		Metrics.HistogramFunctionDuration = promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: ns,
+				Name:      "function_duration_seconds",
+				Help:      "Duration of instrumented function executions in seconds.",
+				Buckets:   prometheus.DefBuckets,
+			},
+			[]string{"function", "result"},
+		)
+	} else {
+		Metrics.HistogramFunctionDuration = nil
+	}
 
 	prometheus.MustRegister(Metrics.CountFailedReloads)
 	prometheus.MustRegister(Metrics.CountSuccessfulReloads)
@@ -336,4 +358,42 @@ func setupPrometheusMetrics() {
 
 func observeAppRefreshTimeMetric(namespace string, e time.Duration) {
 	Metrics.HistogramAppRefreshDuration.WithLabelValues(namespace).Observe(float64(e) / float64(time.Second))
+}
+
+func startFunctionTimer(function string) func(string) {
+	histogram := Metrics.HistogramFunctionDuration
+	if histogram == nil {
+		return nil
+	}
+
+	start := time.Now()
+	return func(metricResult string) {
+		histogram.WithLabelValues(function, metricResult).Observe(time.Since(start).Seconds())
+	}
+}
+
+func startErrorFunctionTimer(function string, err *error) func() {
+	finishTimer := startFunctionTimer(function)
+	if finishTimer == nil {
+		return nil
+	}
+
+	return func() {
+		metricResult := "success"
+		if *err != nil {
+			metricResult = "error"
+		}
+		finishTimer(metricResult)
+	}
+}
+
+func startProxyErrorFunctionTimer(proxyPlatform string, function string, err *error) func() {
+	if config.ProxyPlatform != proxyPlatform {
+		return nil
+	}
+	return startErrorFunctionTimer(function, err)
+}
+
+func debugMetricsEnabled() bool {
+	return config.DebugMetricsEnabled != nil && *config.DebugMetricsEnabled
 }

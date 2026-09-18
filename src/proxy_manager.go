@@ -75,7 +75,11 @@ func (pmgr *NginxProxyManager) IsControlPlaneResponsive() bool {
 	return isCommandResponsive(pmgr.config.NginxCmd)
 }
 
-func (pmgr *NginxProxyManager) Reload() error {
+func (pmgr *NginxProxyManager) Reload() (err error) {
+	if finishTimer := startProxyErrorFunctionTimer("nginx", "NginxProxyManager.Reload", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	// This is to allow arguments as well. Example "docker exec nginx..."
 	args := strings.Fields(pmgr.config.NginxCmd)
 	head := args[0]
@@ -159,7 +163,11 @@ func (pmgr *HAProxyManager) IsControlPlaneResponsive() bool {
 	return true
 }
 
-func (pmgr *HAProxyManager) Reload() error {
+func (pmgr *HAProxyManager) Reload() (err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "HAProxyManager.Reload", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	// This is to allow arguments as well. Example "docker exec nginx..." or SIGUSR2 to master worker
 	args := strings.Fields(pmgr.config.HaproxyReloadCmd)
 	head := args[0]
@@ -250,11 +258,15 @@ func setupGlobalProxyManager() ProxyManager {
 }
 
 // runCommand executes a command and returns a formatted error if it fails.
-func runCommand(head string, args ...string) error {
+func runCommand(head string, args ...string) (err error) {
+	if finishTimer := startErrorFunctionTimer("runCommand", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	cmd := exec.Command(head, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		msg := fmt.Sprint(err) + ": " + stderr.String()
 		return errors.New(msg)
@@ -263,10 +275,19 @@ func runCommand(head string, args ...string) error {
 }
 
 func isCommandResponsive(commandLine string) bool {
+	metricResult := "success"
+	if finishTimer := startFunctionTimer("isCommandResponsive"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
 	parts := strings.Fields(commandLine)
 	if len(parts) == 0 {
+		metricResult = "error"
 		return false
 	}
 	_, err := exec.LookPath(parts[0])
+	if err != nil {
+		metricResult = "error"
+	}
 	return err == nil
 }

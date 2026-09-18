@@ -98,6 +98,7 @@ The complete behavior of Nixy is governed by `nixy.toml`. Below is the complete 
 | `startup_controller_sync_tries` | integer | `2` | On process startup, how many full fresh-sync attempts Drove Gateway makes before using stale persisted datamanager state for controller-unreachable namespaces. Each attempt uses existing per-controller API timeout behavior. |
 | `startup_controller_sync_retry_delay_sec` | integer | `1` | Fixed delay in seconds between startup fresh-sync retry attempts. Values `<= 0` default to `1`. |
 | `state_persistence_enabled` | boolean | `true` | Enables writing last successful reconciliation metadata to disk so restarts can reconcile from cached state if Drove is unavailable. In-memory datamanager state is always maintained. |
+| `debug_metrics_enabled` | boolean | `false` (unset) | Enables the debug-only function histogram `drove_gateway_function_duration_seconds`. Proxy-specific functions are instrumented only for the configured `proxy_platform`. The metric is registered only when this key is explicitly present and set to `true`. |
 | `state_persistence_dir` | string | `"/var/lib/drove-gateway"` | Directory where Drove Gateway stores persisted datamanager state (`datamanager-state.json`) when disk persistence is enabled. |
 | `proxy_platform` | string | `"nginx"` | Defines the underlying proxy enginbe. Supported: `"nginx"` (default) or `"haproxy"`. |
 | `left_delimiter` | string | `""` | Custom left template delimiter for go template parsing (default is `{{`). |

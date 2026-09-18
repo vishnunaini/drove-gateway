@@ -16,7 +16,11 @@ import (
 
 // writeFileAtomic writes content to a temp file in the same directory and renames it into place.
 // The temp file is removed on error paths.
-func writeFileAtomic(path string, content []byte, mode os.FileMode) error {
+func writeFileAtomic(path string, content []byte, mode os.FileMode) (err error) {
+	if finishTimer := startErrorFunctionTimer("writeFileAtomic", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	dir := filepath.Dir(path)
 	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -66,6 +70,7 @@ const persistedStateSchemaVersion = 1
 const persistedStateFileName = "datamanager-state.json"
 
 var errDiskIOTimeout = errors.New("disk io timeout")
+var errDiskIOInProgress = errors.New("disk io operation still in progress")
 
 type PersistedDataManagerState struct {
 	Version    int                 `json:"version"`
@@ -78,7 +83,18 @@ var dataManagerState struct {
 	state *PersistedDataManagerState
 }
 
-var persistStateToDiskInFlight int32
+var readStateFromDiskInFlight int32
+
+type snapshotWriteEvent struct {
+	started bool
+	err     error
+	timeout time.Duration
+}
+
+var snapshotWriteQueue = make(chan PersistedDataManagerState, 1)
+var snapshotWriteEvents = make(chan snapshotWriteEvent)
+var snapshotWriteQueueMu sync.Mutex
+var snapshotWriteWorkerOnce sync.Once
 
 func isStatePersistenceEnabled() bool {
 	if config.StatePersistenceEnabled == nil {
@@ -92,10 +108,10 @@ func getStatePersistenceFilePath() string {
 }
 
 func setDataManagerStateInMemory(state PersistedDataManagerState) {
+	ownedState := deepClone(state)
 	dataManagerState.Lock()
 	defer dataManagerState.Unlock()
-	cloned := state
-	dataManagerState.state = &cloned
+	dataManagerState.state = &ownedState
 }
 
 func diskIOTimeout() time.Duration {
@@ -127,71 +143,111 @@ func rememberDataManagerState() {
 }
 
 func persistStateToDisk(state PersistedDataManagerState) {
-	if !atomic.CompareAndSwapInt32(&persistStateToDiskInFlight, 0, 1) {
-		return
+	startSnapshotWriteWorker()
+
+	snapshotWriteQueueMu.Lock()
+	select {
+	case <-snapshotWriteQueue:
+	default:
 	}
+	snapshotWriteQueue <- state
+	snapshotWriteQueueMu.Unlock()
+}
 
-	go func(snapshot PersistedDataManagerState) {
-		timeout := diskIOTimeout()
-		errCh := make(chan error, 1)
+func startSnapshotWriteWorker() {
+	snapshotWriteWorkerOnce.Do(func() {
+		go monitorSnapshotWrites()
 		go func() {
-			errCh <- persistStateToDiskSync(snapshot)
+			for snapshot := range snapshotWriteQueue {
+				snapshotWriteEvents <- snapshotWriteEvent{started: true, timeout: diskIOTimeout()}
+				err := persistStateToDiskSync(snapshot)
+				snapshotWriteEvents <- snapshotWriteEvent{err: err}
+			}
 		}()
+	})
+}
 
+func monitorSnapshotWrites() {
+	var timer *time.Timer
+	var timeoutCh <-chan time.Time
+
+	for {
 		select {
-		case err := <-errCh:
-			atomic.StoreInt32(&persistStateToDiskInFlight, 0)
-			if err != nil {
+		case event := <-snapshotWriteEvents:
+			if event.started {
+				timer = time.NewTimer(event.timeout)
+				timeoutCh = timer.C
+				continue
+			}
+
+			if timer != nil {
+				timer.Stop()
+				timer = nil
+				timeoutCh = nil
+			}
+			if event.err != nil {
 				logger.WithFields(logrus.Fields{
-					"error": err.Error(),
+					"error": event.err.Error(),
 					"path":  getStatePersistenceFilePath(),
 				}).Warn("Failed to persist datamanager state to disk")
 				updateDiskIOHealth(false, "Disk write failed for datamanager state")
-				return
+				continue
 			}
 			updateDiskIOHealth(true, "Disk read/write healthy")
-			return
-		case <-time.After(timeout):
+		case <-timeoutCh:
 			logger.WithFields(logrus.Fields{
-				"timeout": timeout,
+				"timeout": diskIOTimeout(),
 				"path":    getStatePersistenceFilePath(),
 			}).Warn("Timed out waiting for datamanager state persistence")
 			updateDiskIOHealth(false, "Disk write timed out for datamanager state")
-			go func() {
-				<-errCh
-				atomic.StoreInt32(&persistStateToDiskInFlight, 0)
-			}()
-			return
+			timer = nil
+			timeoutCh = nil
 		}
-	}(state)
+	}
 }
 
 func persistStateToDiskSync(state PersistedDataManagerState) error {
+	metricResult := "success"
+	if finishTimer := startFunctionTimer("persistStateToDiskSync"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
 	if config.StatePersistenceDir == "" {
+		metricResult = "prepare_failed"
 		return errors.New("state_persistence_dir is empty")
 	}
 	if err := os.MkdirAll(config.StatePersistenceDir, 0o755); err != nil {
+		metricResult = "prepare_failed"
 		return err
 	}
 
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
+		metricResult = "prepare_failed"
 		return err
 	}
 
 	stateFile := getStatePersistenceFilePath()
 	fileMode, modeErr := fileModeFromExistingOrDefault(stateFile, 0o644)
 	if modeErr != nil {
+		metricResult = "prepare_failed"
 		return modeErr
 	}
 	if err := writeFileAtomic(stateFile, payload, fileMode); err != nil {
+		metricResult = "write_failed"
 		return err
 	}
 	return nil
 }
 
 func restoreDataManagerStateForNamespaces(namespaces map[string]bool) bool {
+	metricResult := "restored"
+	if finishTimer := startFunctionTimer("restoreDataManagerStateForNamespaces"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
 	if !isStatePersistenceEnabled() {
+		metricResult = "disabled"
 		logger.Info("Disk state persistence disabled via config")
 		updateDataManagerStateHealth(true, "Fresh DataManager data unavailable for namespace(s) and disk persistence is disabled")
 		return false
@@ -200,10 +256,12 @@ func restoreDataManagerStateForNamespaces(namespaces map[string]bool) bool {
 	state, err := readPersistedStateFromDisk()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			metricResult = "missing"
 			logger.WithField("path", getStatePersistenceFilePath()).Info("No persisted state file found, continuing with live discovery")
 			updateDataManagerStateHealth(true, "Fresh DataManager data unavailable for namespace(s) and no persisted state file found")
 			return false
 		}
+		metricResult = "error"
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 			"path":  getStatePersistenceFilePath(),
@@ -214,6 +272,7 @@ func restoreDataManagerStateForNamespaces(namespaces map[string]bool) bool {
 
 	restoredNames := db.ImportSnapshotForNamespaces(state.Snapshot, namespaces)
 	if len(restoredNames) == 0 {
+		metricResult = "empty"
 		updateDataManagerStateHealth(true, "No stale DataManager state available for unavailable namespace(s)")
 		return false
 	}
@@ -229,14 +288,21 @@ func restoreDataManagerStateForNamespaces(namespaces map[string]bool) bool {
 }
 
 func applyDataManagerStateForOfflineReconcile() bool {
+	metricResult := "restored"
+	if finishTimer := startFunctionTimer("applyDataManagerStateForOfflineReconcile"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
 	namespaces := unavailableControllerNamespaces()
 	if len(namespaces) == 0 {
+		metricResult = "not_needed"
 		updateDataManagerStateHealth(true, "Using fresh DataManager data from controller")
 		return false
 	}
 
 	state, source := getDataManagerState()
 	if state == nil {
+		metricResult = "missing"
 		logger.Warn("Controller endpoints are unreachable and no datamanager state snapshot is available")
 		updateDataManagerStateHealth(true, "Controllers unreachable for namespace(s) and no stale DataManager state is available")
 		return false
@@ -245,6 +311,7 @@ func applyDataManagerStateForOfflineReconcile() bool {
 	restoredNamespaces := db.ImportSnapshotForNamespaces(state.Snapshot, namespaces)
 	restoredNamespacesCount := len(restoredNamespaces)
 	if restoredNamespacesCount == 0 {
+		metricResult = "empty"
 		updateDataManagerStateHealth(true, "No stale DataManager state available for unavailable namespace(s)")
 		return false
 	}
@@ -306,7 +373,8 @@ func getDataManagerState() (*PersistedDataManagerState, string) {
 	if dataManagerState.state != nil {
 		state := *dataManagerState.state
 		dataManagerState.RUnlock()
-		return &state, "memory"
+		clonedState := deepClone(state)
+		return &clonedState, "memory"
 	}
 	dataManagerState.RUnlock()
 
@@ -330,6 +398,16 @@ func getDataManagerState() (*PersistedDataManagerState, string) {
 }
 
 func readPersistedStateFromDisk() (*PersistedDataManagerState, error) {
+	metricResult := "success"
+	if finishTimer := startFunctionTimer("readPersistedStateFromDisk"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+	if !atomic.CompareAndSwapInt32(&readStateFromDiskInFlight, 0, 1) {
+		metricResult = "busy"
+		updateDiskIOHealth(false, "Previous disk read for datamanager state is still in progress")
+		return nil, fmt.Errorf("%w: datamanager state read", errDiskIOInProgress)
+	}
+
 	stateFile := getStatePersistenceFilePath()
 	timeout := diskIOTimeout()
 	type readResult struct {
@@ -338,9 +416,12 @@ func readPersistedStateFromDisk() (*PersistedDataManagerState, error) {
 	}
 	readCh := make(chan readResult, 1)
 	go func() {
+		defer atomic.StoreInt32(&readStateFromDiskInFlight, 0)
 		payload, err := os.ReadFile(stateFile)
 		readCh <- readResult{payload: payload, err: err}
 	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
 	var payload []byte
 	var err error
@@ -348,12 +429,14 @@ func readPersistedStateFromDisk() (*PersistedDataManagerState, error) {
 	case result := <-readCh:
 		payload = result.payload
 		err = result.err
-	case <-time.After(timeout):
+	case <-timer.C:
+		metricResult = "timeout"
 		updateDiskIOHealth(false, "Disk read timed out for datamanager state")
 		return nil, fmt.Errorf("%w while reading %s after %s", errDiskIOTimeout, stateFile, timeout)
 	}
 
 	if err != nil {
+		metricResult = "read_failed"
 		if !errors.Is(err, errDiskIOTimeout) {
 			updateDiskIOHealth(true, "Disk read/write healthy")
 		}
@@ -362,9 +445,11 @@ func readPersistedStateFromDisk() (*PersistedDataManagerState, error) {
 
 	state := PersistedDataManagerState{}
 	if err := json.Unmarshal(payload, &state); err != nil {
+		metricResult = "decode_failed"
 		return nil, err
 	}
 	if state.Version != persistedStateSchemaVersion {
+		metricResult = "schema_mismatch"
 		return nil, errors.New("unsupported persisted state schema version")
 	}
 	updateDiskIOHealth(true, "Disk read/write healthy")

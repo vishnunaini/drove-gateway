@@ -227,7 +227,11 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 	return nil
 }
 
-func (manager *HaproxyManager) reconcileBackend(backend string, desiredHosts []Host, currentServers []*runtime_models.RuntimeServer) error {
+func (manager *HaproxyManager) reconcileBackend(backend string, desiredHosts []Host, currentServers []*runtime_models.RuntimeServer) (err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "reconcileBackend", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	var errs []string
 	logger.WithField("backend", backend).Debug("Reconciling HAProxy backend")
 
@@ -313,7 +317,11 @@ func (manager *HaproxyManager) buildCurrentServerMap(currentServers []*runtime_m
 	return serverMap
 }
 
-func (manager *HaproxyManager) removeStaleServers(backend string, currentServers []*runtime_models.RuntimeServer, desiredServerMap map[string]Host) error {
+func (manager *HaproxyManager) removeStaleServers(backend string, currentServers []*runtime_models.RuntimeServer, desiredServerMap map[string]Host) (err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "removeStaleServers", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	var errs []string
 	for _, srv := range currentServers {
 		if _, exists := desiredServerMap[srv.Name]; !exists {
@@ -398,7 +406,11 @@ func (manager *HaproxyManager) removeStaleServers(backend string, currentServers
 	return nil
 }
 
-func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerMap map[string]Host, currentServerMap map[string]runtime_models.RuntimeServer) error {
+func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerMap map[string]Host, currentServerMap map[string]runtime_models.RuntimeServer) (err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "addOrUpdateServers", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	var errs []string
 	for serverName, host := range desiredServerMap {
 		if _, exists := currentServerMap[serverName]; !exists {
@@ -548,7 +560,11 @@ func formatRuntimeServerEndpoint(host string, port int32) string {
 // Start of custom functions not available in HAProxy runtime client library
 // getServersStateWithBackend calls "show servers state" command and parses the output to get servers grouped by backend name
 
-func (manager *HaproxyManager) getServersStateWithBackend() (map[string]runtime_models.RuntimeServers, error) {
+func (manager *HaproxyManager) getServersStateWithBackend() (servers map[string]runtime_models.RuntimeServers, err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "getServersStateWithBackend", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	cmd := "show servers state"
 	result, err := manager.executeWithResponse(cmd)
 	if err != nil {
@@ -565,7 +581,11 @@ func (manager *HaproxyManager) getServersStateWithBackend() (map[string]runtime_
 // where <socket> is manager.socket_addr and <stateFile> is manager.global_server_state_file_path.
 // HAProxy loads this file on the next reload/restart (via the global "server-state-file" directive
 // and "load-server-state-from-file") to preserve dynamic server state applied through the runtime API.
-func (manager *HaproxyManager) writeGlobalServerStateFile() error {
+func (manager *HaproxyManager) writeGlobalServerStateFile() (err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "writeGlobalServerStateFile", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	if !manager.manage_global_server_state_file {
 		return nil
 	}
@@ -601,12 +621,16 @@ func (manager *HaproxyManager) writeGlobalServerStateFile() error {
 	return nil
 }
 
-func (manager *HaproxyManager) executeWithResponse(command string) (string, error) {
+func (manager *HaproxyManager) executeWithResponse(command string) (output string, err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "executeWithResponse", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	rawdata, err := manager.client.ExecuteRaw(command)
 	if err != nil {
 		return "", fmt.Errorf("%w [%s]", err, command)
 	}
-	output := strings.Join(rawdata, "\n")
+	output = strings.Join(rawdata, "\n")
 	if len(output) > 4 {
 		switch output[0:4] {
 		case "[3]:", "[2]:", "[1]:", "[0]:":
@@ -616,7 +640,11 @@ func (manager *HaproxyManager) executeWithResponse(command string) (string, erro
 	return output, nil
 }
 
-func (manager *HaproxyManager) parseRuntimeServersWithBackend(output string) (map[string]runtime_models.RuntimeServers, error) {
+func (manager *HaproxyManager) parseRuntimeServersWithBackend(output string) (servers map[string]runtime_models.RuntimeServers, err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "parseRuntimeServersWithBackend", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	lines := strings.Split(output, "\n")
 	result := make(map[string]runtime_models.RuntimeServers)
 

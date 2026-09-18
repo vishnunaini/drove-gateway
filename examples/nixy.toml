@@ -13,6 +13,9 @@ xproxy = ""
 # If unresponsive longer than this, /v1/health reports ProxyControlPlane unhealthy.
 #proxy_control_plane_timeout_sec = 30
 
+# Enable debug-only function latency metrics (drove_gateway_function_duration_seconds).
+# Metric is registered only when this key is present and set to true.
+#debug_metrics_enabled = true
 
 # Nginx
 #nginxplusapiaddr="127.0.0.1"

@@ -115,6 +115,7 @@ type Config struct {
 	StartupControllerSyncTries                  int              `json:"-" toml:"startup_controller_sync_tries"`
 	StartupControllerSyncRetryDelaySec          int              `json:"-" toml:"startup_controller_sync_retry_delay_sec"`
 	StatePersistenceEnabled                     *bool            `json:"-" toml:"state_persistence_enabled"`
+	DebugMetricsEnabled                         *bool            `json:"-" toml:"debug_metrics_enabled"`
 	StatePersistenceDir                         string           `json:"-" toml:"state_persistence_dir"`
 	apiTimeout                                  int              `json:"-" toml:"api_timeout"`
 	LastUpdates                                 Updates
@@ -545,6 +546,7 @@ func updateHealthSection(section string, status bool, message string) {
 		statusFloat = 0.0
 	}
 	health.Lock()
+	defer health.Unlock()
 	switch section {
 	case "ResolverHealth":
 		health.ResolverHealth.Healthy = status
@@ -577,7 +579,6 @@ func updateHealthSection(section string, status bool, message string) {
 	default:
 		return
 	}
-	health.Unlock()
 }
 
 // Implement ProxyManager interface for NginxAPIManager

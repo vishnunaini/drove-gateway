@@ -236,7 +236,11 @@ func (dm *DataManager) UpdateLeader(namespace string, leader LeaderController) e
 	return nil
 }
 
-func (dm *DataManager) ReadApps(namespace string) (map[string]App, error) {
+func (dm *DataManager) ReadApps(namespace string) (apps map[string]App, err error) {
+	if finishTimer := startErrorFunctionTimer("DataManager.ReadApps", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.RUnlock() // Ensure the lock is always released
 	operation := "ReadLeader"
@@ -292,7 +296,11 @@ func (dm *DataManager) UpdateApps(namespace string, apps map[string]App) error {
 	return nil
 }
 
-func (dm *DataManager) ReadKnownVhosts(namespace string) (Vhosts, error) {
+func (dm *DataManager) ReadKnownVhosts(namespace string) (vhosts Vhosts, err error) {
+	if finishTimer := startErrorFunctionTimer("DataManager.ReadKnownVhosts", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.RUnlock() // Ensure the lock is always released
 	operation := "ReadKnownVhosts"
@@ -320,6 +328,10 @@ func (dm *DataManager) ReadKnownVhosts(namespace string) (Vhosts, error) {
 }
 
 func (dm *DataManager) ReadAllKnownVhosts() Vhosts {
+	if finishTimer := startFunctionTimer("DataManager.ReadAllKnownVhosts"); finishTimer != nil {
+		defer finishTimer("success")
+	}
+
 	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.RUnlock() // Ensure the lock is always released
 	operation := "ReadAllKnownVhosts"
@@ -426,6 +438,10 @@ func (dm *DataManager) UpdateUpstreamAPIUpdateTimestamps(updateTime time.Time) e
 }
 
 func (dm *DataManager) ReadLastKnownVhosts() Vhosts {
+	if finishTimer := startFunctionTimer("DataManager.ReadLastKnownVhosts"); finishTimer != nil {
+		defer finishTimer("success")
+	}
+
 	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.RUnlock() // Ensure the lock is always released
 	operation := "ReadLastKnownVhosts"
@@ -454,6 +470,10 @@ func (dm *DataManager) UpdateLastKnownVhosts(inLastKnownVhosts Vhosts) error {
 }
 
 func (dm *DataManager) ReadLastKnownBackends() map[string]bool {
+	if finishTimer := startFunctionTimer("DataManager.ReadLastKnownBackends"); finishTimer != nil {
+		defer finishTimer("success")
+	}
+
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
 	operation := "ReadLastKnownBackends"
@@ -482,6 +502,10 @@ func (dm *DataManager) UpdateLastKnownBackends(inLastKnownBackends map[string]bo
 }
 
 func (dm *DataManager) ReadAllNamespace() map[string]NamespaceData {
+	if finishTimer := startFunctionTimer("DataManager.ReadAllNamespace"); finishTimer != nil {
+		defer finishTimer("success")
+	}
+
 	dm.mu.RLock()         // Read lock to allow multiple concurrent reads
 	defer dm.mu.RUnlock() // Ensure the lock is always released
 	operation := "ReadAllNamespace"
@@ -510,6 +534,10 @@ func (dm *DataManager) ReadStaticData() StaticConfig {
 }
 
 func (dm *DataManager) ExportSnapshot() DataManagerSnapshot {
+	if finishTimer := startFunctionTimer("DataManager.ExportSnapshot"); finishTimer != nil {
+		defer finishTimer("success")
+	}
+
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
 
@@ -531,6 +559,11 @@ func (dm *DataManager) ImportSnapshot(snapshot DataManagerSnapshot) int {
 // ImportSnapshotForNamespaces restores metadata only for selected namespaces.
 // If namespaces is nil, all namespaces from the snapshot are considered.
 func (dm *DataManager) ImportSnapshotForNamespaces(snapshot DataManagerSnapshot, namespaces map[string]bool) []string {
+	metricResult := "restored"
+	if finishTimer := startFunctionTimer("DataManager.ImportSnapshotForNamespaces"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -563,18 +596,28 @@ func (dm *DataManager) ImportSnapshotForNamespaces(snapshot DataManagerSnapshot,
 	}
 
 	sort.Strings(restoredNames)
+	if len(restoredNames) == 0 {
+		metricResult = "empty"
+	}
 	return restoredNames
 }
 
 func deepClone[T any](src T) T {
+	metricResult := "success"
+	if finishTimer := startFunctionTimer("deepClone"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
 	data, err := json.Marshal(src)
 	if err != nil {
+		metricResult = "marshal_failed"
 		logger.WithError(err).Warn("deep clone marshal failed")
 		return src
 	}
 
 	var dst T
 	if err := json.Unmarshal(data, &dst); err != nil {
+		metricResult = "unmarshal_failed"
 		logger.WithError(err).Warn("deep clone unmarshal failed")
 		return src
 	}
