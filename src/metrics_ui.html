@@ -282,6 +282,8 @@
       var fetchInFlight = false;
       var pollTimer = null;
       var chartSeriesLimit = 16;
+      var functionDurationFamilyName = 'drove_gateway_function_duration_seconds';
+      var functionLabelKey = 'function';
 
       function schedulePolling() {
         if (pollTimer !== null) {
@@ -579,133 +581,192 @@
         };
       }
 
+      function buildPanelDefinition(family, title, panelKey, samples, splitFieldLabel) {
+        return {
+          key: panelKey,
+          title: title,
+          type: family.type || 'untyped',
+          help: family.help || '',
+          samples: samples,
+          splitFieldLabel: splitFieldLabel || ''
+        };
+      }
+
+      function splitFamilyIntoPanels(family) {
+        if (family.name !== functionDurationFamilyName) {
+          return [buildPanelDefinition(family, family.name, family.name, family.samples, '')];
+        }
+
+        var groupedByFunction = new Map();
+        for (var i = 0; i < family.samples.length; i++) {
+          var sample = family.samples[i];
+          var functionName = sample.labels[functionLabelKey] || 'unknown';
+          if (!groupedByFunction.has(functionName)) {
+            groupedByFunction.set(functionName, []);
+          }
+          groupedByFunction.get(functionName).push(sample);
+        }
+
+        var functionNames = Array.from(groupedByFunction.keys()).sort();
+        if (functionNames.length === 0) {
+          return [buildPanelDefinition(family, family.name, family.name, family.samples, '')];
+        }
+
+        var panels = [];
+        for (var j = 0; j < functionNames.length; j++) {
+          var functionName = functionNames[j];
+          var splitFieldLabel = 'function=' + functionName;
+          panels.push(
+            buildPanelDefinition(
+              family,
+              family.name + ' [' + splitFieldLabel + ']',
+              family.name + '|' + splitFieldLabel,
+              groupedByFunction.get(functionName),
+              splitFieldLabel
+            )
+          );
+        }
+        return panels;
+      }
+
+      function renderPanel(panel) {
+        var card = document.createElement('section');
+        card.className = 'card';
+
+        var helpText = panel.help;
+        if (panel.splitFieldLabel) {
+          helpText = (helpText ? helpText + ' ' : '') + 'Split panel for ' + panel.splitFieldLabel + '.';
+        }
+
+        var titleHtml = '' +
+          '<div class="title-row">' +
+          '  <div class="metric-name">' + escapeHtml(panel.title) + '</div>' +
+          '  <div class="metric-type">' + escapeHtml(panel.type) + '</div>' +
+          '</div>' +
+          '<p class="metric-help">' + escapeHtml(helpText) + '</p>' +
+          '<div class="canvas-wrap"><canvas></canvas></div>' +
+          '<div class="small-note" data-note></div>' +
+          '<details>' +
+          '  <summary>Series values (' + panel.samples.length + ')</summary>' +
+          '  <table>' +
+          '    <thead><tr><th>Series</th><th>Value</th></tr></thead>' +
+          '    <tbody></tbody>' +
+          '  </table>' +
+          '</details>';
+
+        card.innerHTML = titleHtml;
+        grid.appendChild(card);
+
+        var tbody = card.querySelector('tbody');
+        for (var i = 0; i < panel.samples.length; i++) {
+          var sample = panel.samples[i];
+          var row = document.createElement('tr');
+          var label = buildSeriesLabel(sample.metricName, sample.labels);
+          row.innerHTML = '<td>' + escapeHtml(label) + '</td><td>' + escapeHtml(formatValue(sample.value)) + '</td>';
+          tbody.appendChild(row);
+        }
+
+        var noteEl = card.querySelector('[data-note]');
+        if (panel.samples.length === 0) {
+          noteEl.textContent = 'No samples available yet for this panel.';
+          return;
+        }
+
+        var datasets = [];
+        var plotted = Math.min(panel.samples.length, chartSeriesLimit);
+        for (var k = 0; k < plotted; k++) {
+          var plottedSample = panel.samples[k];
+          var seriesKey = buildSeriesKey(plottedSample.metricName, plottedSample.labels);
+          var seriesLabel = buildSeriesLabel(plottedSample.metricName, plottedSample.labels);
+          datasets.push(createDataset(seriesLabel, seriesKey, k));
+        }
+
+        if (panel.samples.length > plotted) {
+          noteEl.textContent = 'Chart shows first ' + plotted + ' series (of ' + panel.samples.length + '). Expand table to view all series.';
+        } else {
+          noteEl.textContent = 'Chart shows all ' + panel.samples.length + ' series.';
+        }
+
+        var canvas = card.querySelector('canvas');
+        var chart = new Chart(canvas, {
+          type: 'line',
+          data: { datasets: datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: {
+                  boxWidth: 10,
+                  boxHeight: 10,
+                  font: { size: 10 }
+                }
+              },
+              tooltip: {
+                callbacks: {
+                  title: function (items) {
+                    if (!items || items.length === 0) {
+                      return '';
+                    }
+                    return timestampLabel(items[0].parsed.x);
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                type: 'linear',
+                ticks: {
+                  callback: function (value) {
+                    return timestampLabel(value);
+                  },
+                  maxTicksLimit: 5
+                },
+                grid: {
+                  color: '#f1f5f9'
+                }
+              },
+              y: {
+                grid: {
+                  color: '#f1f5f9'
+                }
+              }
+            }
+          }
+        });
+
+        familyCharts.set(panel.key, chart);
+      }
+
       function renderFamilies(families) {
         clearCharts();
         grid.innerHTML = '';
 
         var filter = filterInput.value.trim().toLowerCase();
-        var shownFamilies = 0;
+        var shownPanels = 0;
         var shownSeries = 0;
 
         for (var i = 0; i < families.length; i++) {
           var family = families[i];
-          var haystack = (family.name + ' ' + family.help).toLowerCase();
-          if (filter && haystack.indexOf(filter) === -1) {
-            continue;
-          }
-
-          shownFamilies++;
-          shownSeries += family.samples.length;
-
-          var card = document.createElement('section');
-          card.className = 'card';
-
-          var helpText = family.help || '';
-          var titleHtml = '' +
-            '<div class="title-row">' +
-            '  <div class="metric-name">' + escapeHtml(family.name) + '</div>' +
-            '  <div class="metric-type">' + escapeHtml(family.type || 'untyped') + '</div>' +
-            '</div>' +
-            '<p class="metric-help">' + escapeHtml(helpText) + '</p>' +
-            '<div class="canvas-wrap"><canvas></canvas></div>' +
-            '<div class="small-note" data-note></div>' +
-            '<details>' +
-            '  <summary>Series values (' + family.samples.length + ')</summary>' +
-            '  <table>' +
-            '    <thead><tr><th>Series</th><th>Value</th></tr></thead>' +
-            '    <tbody></tbody>' +
-            '  </table>' +
-            '</details>';
-
-          card.innerHTML = titleHtml;
-          grid.appendChild(card);
-
-          var tbody = card.querySelector('tbody');
-          for (var j = 0; j < family.samples.length; j++) {
-            var sample = family.samples[j];
-            var row = document.createElement('tr');
-            var label = buildSeriesLabel(sample.metricName, sample.labels);
-            row.innerHTML = '<td>' + escapeHtml(label) + '</td><td>' + escapeHtml(formatValue(sample.value)) + '</td>';
-            tbody.appendChild(row);
-          }
-
-          var noteEl = card.querySelector('[data-note]');
-          if (family.samples.length === 0) {
-            noteEl.textContent = 'No samples available yet for this metric family.';
-            continue;
-          }
-
-          var datasets = [];
-          var plotted = Math.min(family.samples.length, chartSeriesLimit);
-          for (var k = 0; k < plotted; k++) {
-            var plottedSample = family.samples[k];
-            var seriesKey = buildSeriesKey(plottedSample.metricName, plottedSample.labels);
-            var seriesLabel = buildSeriesLabel(plottedSample.metricName, plottedSample.labels);
-            datasets.push(createDataset(seriesLabel, seriesKey, k));
-          }
-
-          if (family.samples.length > plotted) {
-            noteEl.textContent = 'Chart shows first ' + plotted + ' series (of ' + family.samples.length + '). Expand table to view all series.';
-          } else {
-            noteEl.textContent = 'Chart shows all ' + family.samples.length + ' series.';
-          }
-
-          var canvas = card.querySelector('canvas');
-          var chart = new Chart(canvas, {
-            type: 'line',
-            data: { datasets: datasets },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              animation: false,
-              plugins: {
-                legend: {
-                  position: 'bottom',
-                  labels: {
-                    boxWidth: 10,
-                    boxHeight: 10,
-                    font: { size: 10 }
-                  }
-                },
-                tooltip: {
-                  callbacks: {
-                    title: function (items) {
-                      if (!items || items.length === 0) {
-                        return '';
-                      }
-                      return timestampLabel(items[0].parsed.x);
-                    }
-                  }
-                }
-              },
-              scales: {
-                x: {
-                  type: 'linear',
-                  ticks: {
-                    callback: function (value) {
-                      return timestampLabel(value);
-                    },
-                    maxTicksLimit: 5
-                  },
-                  grid: {
-                    color: '#f1f5f9'
-                  }
-                },
-                y: {
-                  grid: {
-                    color: '#f1f5f9'
-                  }
-                }
-              }
+          var panels = splitFamilyIntoPanels(family);
+          for (var j = 0; j < panels.length; j++) {
+            var panel = panels[j];
+            var panelHaystack = (panel.title + ' ' + panel.help + ' ' + panel.splitFieldLabel).toLowerCase();
+            if (filter && panelHaystack.indexOf(filter) === -1) {
+              continue;
             }
-          });
 
-          familyCharts.set(family.name, chart);
+            shownPanels++;
+            shownSeries += panel.samples.length;
+            renderPanel(panel);
+          }
         }
 
-        counts.textContent = 'Showing ' + shownFamilies + ' metric families / ' + shownSeries + ' series';
+        counts.textContent = 'Showing ' + shownPanels + ' panels / ' + shownSeries + ' series';
 
-        if (shownFamilies === 0) {
+        if (shownPanels === 0) {
           grid.innerHTML = '<div class="empty">No metrics matched the current filter.</div>';
         }
       }
