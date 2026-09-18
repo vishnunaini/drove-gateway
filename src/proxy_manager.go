@@ -42,7 +42,7 @@ func (pmgr *NginxProxyManager) CheckConfig(testConfigPath string) error {
 	head := args[0]
 	args = args[1:]
 	args = append(args, ProgramCmdConfFileArg, testConfigPath, ProgramCmdConfTestArg)
-	return runCommand(head, args...)
+	return runValidationCommand(head, args...)
 }
 
 func (pmgr *NginxProxyManager) GetTempFilePattern() string {
@@ -86,7 +86,6 @@ func (pmgr *NginxProxyManager) Reload() (err error) {
 	head := args[0]
 	args = args[1:]
 	args = append(args, "-s", "reload")
-	logger.WithFields(logrus.Fields{"cmd": head, "args": args}).Info("Reloading nginx")
 	return runCommand(head, args...)
 }
 
@@ -117,7 +116,7 @@ func (pmgr *HAProxyManager) CheckConfig(testConfigPath string) error {
 	head := args[0]
 	args = args[1:]
 	args = append(args, ProgramCmdConfFileArg, testConfigPath, ProgramCmdConfTestArg)
-	return runCommand(head, args...)
+	return runValidationCommand(head, args...)
 }
 
 func (pmgr *HAProxyManager) GetTempFilePattern() string {
@@ -170,7 +169,7 @@ func (pmgr *HAProxyManager) Reload() (err error) {
 		defer finishTimer()
 	}
 
-	// This is to allow arguments as well. Example "docker exec nginx..." or SIGUSR2 to master worker
+	// This is to allow arguments as well. Example "docker exec nginx..." or a master-worker reload command.
 	args := strings.Fields(pmgr.config.HaproxyReloadCmd)
 	head := args[0]
 	args = args[1:]
@@ -274,6 +273,13 @@ func runCommand(head string, args ...string) (err error) {
 		return errors.New(msg)
 	}
 	return nil
+}
+
+// runValidationCommand treats the validator exit status as authoritative. HAProxy and NGINX
+// commonly write warnings to stderr while returning success; only a nonzero exit or signal is a
+// validation failure.
+func runValidationCommand(head string, args ...string) error {
+	return runCommand(head, args...)
 }
 
 func isCommandResponsive(commandLine string) bool {
