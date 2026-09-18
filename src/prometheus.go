@@ -9,6 +9,13 @@ import (
 
 const ns = "drove_gateway"
 
+const (
+	// Native histogram settings for debug function timings.
+	// Prometheus v2.40+ can ingest sparse buckets when enabled at scrape time.
+	functionDurationNativeBucketFactor = 1.1
+	functionDurationNativeMaxBuckets   = 160
+)
+
 type DroveGatewayPrometheusMetrics struct {
 	CountFailedReloads                prometheus.Counter
 	CountSuccessfulReloads            prometheus.Counter
@@ -318,7 +325,13 @@ func setupPrometheusMetrics() {
 				Namespace: ns,
 				Name:      "function_duration_seconds",
 				Help:      "Duration of instrumented function executions in seconds.",
-				Buckets:   prometheus.DefBuckets,
+				// Keep explicit classic buckets for compatibility with systems that scrape
+				// classic bucket series only, and widen the range to reduce +Inf lumping.
+				Buckets: prometheus.ExponentialBuckets(0.001, 2, 24),
+				// Enable sparse/native histogram ingestion for Prometheus v2.40+.
+				NativeHistogramBucketFactor:     functionDurationNativeBucketFactor,
+				NativeHistogramMaxBucketNumber:  functionDurationNativeMaxBuckets,
+				NativeHistogramMinResetDuration: 15 * time.Minute,
 			},
 			[]string{"function", "result"},
 		)
