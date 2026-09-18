@@ -766,7 +766,7 @@ func main() {
 	mux.HandleFunc("/v1/proxy/restart/begin", proxyRestartBeginAPI).Methods(http.MethodPost)
 	mux.HandleFunc("/v1/proxy/restart/complete", proxyRestartCompleteAPI).Methods(http.MethodPost)
 	mux.Handle("/v1/metrics", promhttp.Handler())
-	mux.HandleFunc("/metrics/ui", metricsUIHandler).Methods(http.MethodGet)
+	mux.HandleFunc("/ui/metrics", metricsUIHandler).Methods(http.MethodGet)
 	var s_tls *http.Server
 	var s *http.Server
 	listenAddr := net.JoinHostPort(config.Address, config.Port)

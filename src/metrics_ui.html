@@ -192,23 +192,28 @@
     .panel-tools {
       display: flex;
       flex-wrap: wrap;
-      gap: 6px;
+      align-items: center;
+      gap: 8px;
       margin: 0 0 8px 0;
     }
 
-    .panel-tools button {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
-      color: var(--ink);
+    .panel-tools .slider-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
       font-size: 11px;
-      line-height: 1;
-      padding: 4px 8px;
-      cursor: pointer;
+      color: var(--muted);
     }
 
-    .panel-tools button:hover {
-      background: #f8fafc;
+    .panel-tools .slider-control span {
+      font-weight: 600;
+      min-width: 10px;
+    }
+
+    .panel-tools .slider-control input[type="range"] {
+      width: 82px;
+      margin: 0;
+      accent-color: var(--accent);
     }
 
     .canvas-wrap {
@@ -243,6 +248,12 @@
       border-collapse: collapse;
       margin-top: 8px;
       font-size: 12px;
+    }
+
+    .series-table-wrap {
+      max-height: 220px;
+      overflow: auto;
+      overscroll-behavior: contain;
     }
 
     th,
@@ -376,6 +387,8 @@
       var panelMaxHeightPx = 920;
       var panelSpanOrder = ['1', '2', 'full'];
       var panelTitleByKey = new Map();
+      var panelSeriesDetailsOpenState = new Map();
+      var panelSeriesTableScrollState = new Map();
       var metricsAcceptHeader = 'application/openmetrics-text; version=1.0.0; charset=utf-8, text/plain; version=0.0.4; q=0.9, */*; q=0.1';
       var latestRenderToken = 0;
 
@@ -403,23 +416,49 @@
         return Math.min(max, Math.max(min, value));
       }
 
-      function getWindowScrollTop() {
+      function getWindowScrollOffset() {
+        var x = 0;
+        var y = 0;
+        if (typeof window.pageXOffset === 'number') {
+          x = window.pageXOffset;
+        } else if (document.documentElement && typeof document.documentElement.scrollLeft === 'number') {
+          x = document.documentElement.scrollLeft;
+        }
         if (typeof window.pageYOffset === 'number') {
-          return window.pageYOffset;
+          y = window.pageYOffset;
+        } else if (document.documentElement && typeof document.documentElement.scrollTop === 'number') {
+          y = document.documentElement.scrollTop;
         }
-        if (document.documentElement && typeof document.documentElement.scrollTop === 'number') {
-          return document.documentElement.scrollTop;
-        }
-        return 0;
+        return {
+          x: x,
+          y: y
+        };
       }
 
-      function restoreWindowScrollTop(offsetY, renderToken) {
+      function restoreWindowScrollOffset(offset, renderToken) {
         window.requestAnimationFrame(function () {
           if (renderToken !== latestRenderToken) {
             return;
           }
-          window.scrollTo(0, Math.max(0, Number(offsetY) || 0));
+          var x = Math.max(0, Number(offset && offset.x) || 0);
+          var y = Math.max(0, Number(offset && offset.y) || 0);
+          window.scrollTo(x, y);
         });
+      }
+
+      function capturePanelSeriesTableScrollState() {
+        var wrappers = grid.querySelectorAll('.series-table-wrap[data-panel-scroll-key]');
+        for (var i = 0; i < wrappers.length; i++) {
+          var wrapper = wrappers[i];
+          var key = wrapper.getAttribute('data-panel-scroll-key');
+          if (!key) {
+            continue;
+          }
+          panelSeriesTableScrollState.set(key, {
+            top: wrapper.scrollTop,
+            left: wrapper.scrollLeft
+          });
+        }
       }
 
       function getPanelLayout(panelKey) {
@@ -1226,6 +1265,12 @@
           helpText = (helpText ? helpText + ' ' : '') + 'Split panel for ' + panel.splitFieldLabel + '.';
         }
 
+        var detailsOpenAttr = panelSeriesDetailsOpenState.get(panel.key) ? ' open' : '';
+        var spanSliderValue = panelSpanOrder.indexOf(panelLayout.span);
+        if (spanSliderValue < 0) {
+          spanSliderValue = 0;
+        }
+
         var titleHtml = '' +
           '<div class="title-row">' +
           '  <div class="metric-name">' + escapeHtml(panel.title) + '</div>' +
@@ -1233,25 +1278,60 @@
           '</div>' +
           '<p class="metric-help">' + escapeHtml(helpText) + '</p>' +
           '<div class="panel-tools">' +
-          '  <button type="button" data-panel-action="span-dec" title="Decrease panel width">W-</button>' +
-          '  <button type="button" data-panel-action="span-inc" title="Increase panel width">W+</button>' +
-          '  <button type="button" data-panel-action="height-dec" title="Decrease chart height">H-</button>' +
-          '  <button type="button" data-panel-action="height-inc" title="Increase chart height">H+</button>' +
+          '  <label class="slider-control" title="Panel width">' +
+          '    <span>W</span>' +
+          '    <input type="range" min="0" max="2" step="1" value="' + spanSliderValue + '" data-panel-slider="span">' +
+          '  </label>' +
+          '  <label class="slider-control" title="Chart height">' +
+          '    <span>H</span>' +
+          '    <input type="range" min="' + panelMinHeightPx + '" max="' + panelMaxHeightPx + '" step="' + panelHeightStepPx + '" value="' + panelLayout.heightPx + '" data-panel-slider="height">' +
+          '  </label>' +
           '</div>' +
           '<div class="canvas-wrap"><canvas></canvas></div>' +
           '<div class="small-note" data-note></div>' +
-          '<details>' +
+          '<details' + detailsOpenAttr + '>' +
           '  <summary>Series values (' + panelSamples.length + ')</summary>' +
+          '  <div class="series-table-wrap" data-panel-scroll-key="' + escapeHtml(panel.key) + '">' +
           '  <table>' +
           '    <thead><tr><th>Series</th><th>Value</th></tr></thead>' +
           '    <tbody></tbody>' +
           '  </table>' +
+          '  </div>' +
           '</details>';
 
         card.innerHTML = titleHtml;
         grid.appendChild(card);
 
-        card.addEventListener('click', function () {
+        var detailsElement = card.querySelector('details');
+        if (detailsElement) {
+          detailsElement.addEventListener('toggle', function () {
+            panelSeriesDetailsOpenState.set(panel.key, detailsElement.open);
+          });
+        }
+
+        var seriesTableWrap = card.querySelector('.series-table-wrap');
+        if (seriesTableWrap) {
+          var savedTableScroll = panelSeriesTableScrollState.get(panel.key);
+          if (savedTableScroll) {
+            seriesTableWrap.scrollTop = Math.max(0, Number(savedTableScroll.top) || 0);
+            seriesTableWrap.scrollLeft = Math.max(0, Number(savedTableScroll.left) || 0);
+          }
+
+          seriesTableWrap.addEventListener('scroll', function () {
+            panelSeriesTableScrollState.set(panel.key, {
+              top: seriesTableWrap.scrollTop,
+              left: seriesTableWrap.scrollLeft
+            });
+          }, { passive: true });
+        }
+
+        card.addEventListener('click', function (event) {
+          if (event.target && event.target.closest && event.target.closest('details')) {
+            return;
+          }
+          if (event.target && event.target.closest && event.target.closest('.panel-tools')) {
+            return;
+          }
           if (selectedPanelKey === panel.key) {
             return;
           }
@@ -1261,20 +1341,29 @@
           renderFamilies(latestFamilies);
         });
 
-        var panelToolButtons = card.querySelectorAll('[data-panel-action]');
-        for (var toolIndex = 0; toolIndex < panelToolButtons.length; toolIndex++) {
-          panelToolButtons[toolIndex].addEventListener('click', function (event) {
+        var spanSlider = card.querySelector('[data-panel-slider="span"]');
+        if (spanSlider) {
+          spanSlider.addEventListener('input', function (event) {
             event.stopPropagation();
-            var action = event.currentTarget.getAttribute('data-panel-action');
-            if (action === 'span-dec') {
-              adjustPanelSpan(panel.key, -1);
-            } else if (action === 'span-inc') {
-              adjustPanelSpan(panel.key, 1);
-            } else if (action === 'height-dec') {
-              adjustPanelHeight(panel.key, -panelHeightStepPx);
-            } else if (action === 'height-inc') {
-              adjustPanelHeight(panel.key, panelHeightStepPx);
+            var nextIndex = Number(spanSlider.value);
+            if (!Number.isFinite(nextIndex)) {
+              nextIndex = 0;
             }
+            nextIndex = clamp(Math.floor(nextIndex), 0, panelSpanOrder.length - 1);
+            panelLayout.span = panelSpanOrder[nextIndex];
+            renderFamilies(latestFamilies);
+          });
+        }
+
+        var heightSlider = card.querySelector('[data-panel-slider="height"]');
+        if (heightSlider) {
+          heightSlider.addEventListener('input', function (event) {
+            event.stopPropagation();
+            var nextHeight = Number(heightSlider.value);
+            if (!Number.isFinite(nextHeight)) {
+              nextHeight = panelLayout.heightPx;
+            }
+            panelLayout.heightPx = clamp(nextHeight, panelMinHeightPx, panelMaxHeightPx);
             renderFamilies(latestFamilies);
           });
         }
@@ -1385,7 +1474,8 @@
       }
 
       function renderFamilies(families) {
-        var scrollTopBeforeRender = getWindowScrollTop();
+        var windowScrollOffsetBeforeRender = getWindowScrollOffset();
+        capturePanelSeriesTableScrollState();
         latestRenderToken += 1;
         var renderToken = latestRenderToken;
 
@@ -1447,7 +1537,7 @@
 
         updateSelectedPanelStatusText();
         updateExpandSelectedButton();
-        restoreWindowScrollTop(scrollTopBeforeRender, renderToken);
+        restoreWindowScrollOffset(windowScrollOffsetBeforeRender, renderToken);
       }
 
       async function fetchAndRender() {

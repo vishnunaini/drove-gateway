@@ -82,7 +82,7 @@ For Debian/RPM packaging, refer to `BUILD.md` and `PACKAGING.md`.
 
 Drove Gateway now exposes a lightweight, client-side metrics viewer at:
 
-* `/metrics/ui`
+* `/ui/metrics`
 
 The page fetches metrics from:
 
@@ -90,7 +90,7 @@ The page fetches metrics from:
 
 The UI negotiates and parses Prometheus/OpenMetrics text exposition in the browser (no server-side metric processing). It automatically shows every registered metric family and series currently exposed by the process.
 
-Native/sparse histograms (Prometheus v2.40+) are ingested and queried as native histogram samples in Prometheus, but this page reads text exposition from `/v1/metrics`. Therefore, histogram visualization in `/metrics/ui` uses classic compatibility series (`*_bucket`, `*_sum`, `*_count`) for rendering.
+Native/sparse histograms (Prometheus v2.40+) are ingested and queried as native histogram samples in Prometheus, but this page reads text exposition from `/v1/metrics`. Therefore, histogram visualization in `/ui/metrics` uses classic compatibility series (`*_bucket`, `*_sum`, `*_count`) for rendering.
 
 ## Configuration Options (`nixy.toml`)
 

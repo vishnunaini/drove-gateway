@@ -8,7 +8,7 @@ import (
 )
 
 func TestMetricsUIHandler(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/metrics/ui", nil)
+	request := httptest.NewRequest(http.MethodGet, "/ui/metrics", nil)
 	response := httptest.NewRecorder()
 
 	metricsUIHandler(response, request)
@@ -34,5 +34,14 @@ func TestMetricsUIHandler(t *testing.T) {
 	}
 	if !strings.Contains(body, "delta sum / delta count") {
 		t.Fatalf("body does not contain interval histogram calculation")
+	}
+	if !strings.Contains(body, "data-panel-slider=\"span\"") {
+		t.Fatalf("body does not contain width slider control")
+	}
+	if !strings.Contains(body, "data-panel-slider=\"height\"") {
+		t.Fatalf("body does not contain height slider control")
+	}
+	if !strings.Contains(body, "series-table-wrap") {
+		t.Fatalf("body does not contain internal series table scroll wrapper")
 	}
 }
