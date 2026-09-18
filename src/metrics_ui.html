@@ -814,9 +814,13 @@
       }
 
       function createDataset(seriesLabel, seriesKey, index) {
+        return createDatasetFromPoints(seriesLabel, seriesHistory.get(seriesKey) || [], index);
+      }
+
+      function createDatasetFromPoints(seriesLabel, points, index) {
         return {
           label: seriesLabel,
-          data: seriesHistory.get(seriesKey) || [],
+          data: points,
           borderColor: chartPalette[index % chartPalette.length],
           backgroundColor: chartPalette[index % chartPalette.length],
           borderWidth: 1.5,
@@ -824,6 +828,114 @@
           tension: 0.2,
           parsing: false
         };
+      }
+
+      function counterDelta(currentValue, previousValue) {
+        if (currentValue >= previousValue) {
+          return currentValue - previousValue;
+        }
+        return currentValue;
+      }
+
+      function buildCounterDeltaPoints(seriesKey) {
+        var history = seriesHistory.get(seriesKey) || [];
+        var points = [];
+        for (var i = 1; i < history.length; i++) {
+          points.push({
+            x: history[i].x,
+            y: counterDelta(history[i].y, history[i - 1].y)
+          });
+        }
+        return points;
+      }
+
+      function buildHistogramAverageDatasets(samples) {
+        var componentsByLabels = new Map();
+
+        for (var i = 0; i < samples.length; i++) {
+          var sample = samples[i];
+          var component = '';
+          if (sample.metricName.endsWith(histogramSuffixSum)) {
+            component = 'sum';
+          } else if (sample.metricName.endsWith(histogramSuffixCount)) {
+            component = 'count';
+          } else {
+            continue;
+          }
+
+          var labelsKey = labelsToString(sample.labels);
+          if (!componentsByLabels.has(labelsKey)) {
+            componentsByLabels.set(labelsKey, {
+              labels: sample.labels,
+              sumKey: '',
+              countKey: ''
+            });
+          }
+          componentsByLabels.get(labelsKey)[component + 'Key'] = buildSeriesKey(sample.metricName, sample.labels);
+        }
+
+        var datasets = [];
+        for (var components of componentsByLabels.values()) {
+          if (datasets.length >= chartSeriesLimit) {
+            break;
+          }
+          if (!components.sumKey || !components.countKey) {
+            continue;
+          }
+
+          var sumHistory = seriesHistory.get(components.sumKey) || [];
+          var countHistory = seriesHistory.get(components.countKey) || [];
+          var pointCount = Math.min(sumHistory.length, countHistory.length);
+          var averagePoints = [];
+
+          for (var pointIndex = 1; pointIndex < pointCount; pointIndex++) {
+            var histogramReset = countHistory[pointIndex].y < countHistory[pointIndex - 1].y;
+            var countDelta = histogramReset
+              ? countHistory[pointIndex].y
+              : countHistory[pointIndex].y - countHistory[pointIndex - 1].y;
+            if (countDelta <= 0) {
+              continue;
+            }
+            var sumDelta = histogramReset
+              ? sumHistory[pointIndex].y
+              : sumHistory[pointIndex].y - sumHistory[pointIndex - 1].y;
+            if (sumDelta < 0) {
+              continue;
+            }
+            averagePoints.push({
+              x: countHistory[pointIndex].x,
+              y: sumDelta / countDelta
+            });
+          }
+
+          datasets.push(
+            createDatasetFromPoints(
+              'Average duration ' + (labelsKey || '{}'),
+              averagePoints,
+              datasets.length
+            )
+          );
+        }
+        return datasets;
+      }
+
+      function buildHistogramBucketDeltaDatasets(samples) {
+        var datasets = [];
+        for (var i = 0; i < samples.length && datasets.length < chartSeriesLimit; i++) {
+          var sample = samples[i];
+          if (!isBucketSample(sample)) {
+            continue;
+          }
+          var seriesKey = buildSeriesKey(sample.metricName, sample.labels);
+          datasets.push(
+            createDatasetFromPoints(
+              'Observations le=' + sample.labels[bucketLabelKey] + ' ' + labelsToStringExcluding(sample.labels, [bucketLabelKey]),
+              buildCounterDeltaPoints(seriesKey),
+              datasets.length
+            )
+          );
+        }
+        return datasets;
       }
 
       function buildPanelDefinition(family, title, panelKey, samples, splitFieldLabel) {
@@ -1186,18 +1298,32 @@
         var bucketPrefix = selectedBucket === bucketFilterAllValue ? '' : 'Bucket filter le=' + selectedBucket + '. ';
 
         var datasets = [];
-        var plotted = Math.min(panelSamples.length, chartSeriesLimit);
-        for (var k = 0; k < plotted; k++) {
-          var plottedSample = panelSamples[k];
-          var seriesKey = buildSeriesKey(plottedSample.metricName, plottedSample.labels);
-          var seriesLabel = buildSeriesLabel(plottedSample.metricName, plottedSample.labels);
-          datasets.push(createDataset(seriesLabel, seriesKey, k));
-        }
-
-        if (panelSamples.length > plotted) {
-          noteEl.textContent = bucketPrefix + 'Chart shows first ' + plotted + ' series (of ' + panelSamples.length + '). Expand table to view all series.';
+        var chartYAxisTitle = 'Value';
+        var histogramPanel = panel.type.toLowerCase() === 'histogram';
+        if (histogramPanel && selectedBucket === bucketFilterAllValue) {
+          datasets = buildHistogramAverageDatasets(panelSamples);
+          chartYAxisTitle = 'Duration (seconds)';
+          noteEl.textContent = datasets.length === 0 || datasets[0].data.length === 0
+            ? 'Waiting for two refreshes to calculate interval average duration.'
+            : 'Chart shows interval average duration (delta sum / delta count). Raw cumulative histogram series remain in the table.';
+        } else if (histogramPanel) {
+          datasets = buildHistogramBucketDeltaDatasets(panelSamples);
+          chartYAxisTitle = 'Observations per refresh';
+          noteEl.textContent = bucketPrefix + 'Chart shows new cumulative-bucket observations during each refresh interval. Raw values remain in the table.';
         } else {
-          noteEl.textContent = bucketPrefix + 'Chart shows all ' + panelSamples.length + ' series.';
+          var plotted = Math.min(panelSamples.length, chartSeriesLimit);
+          for (var k = 0; k < plotted; k++) {
+            var plottedSample = panelSamples[k];
+            var seriesKey = buildSeriesKey(plottedSample.metricName, plottedSample.labels);
+            var seriesLabel = buildSeriesLabel(plottedSample.metricName, plottedSample.labels);
+            datasets.push(createDataset(seriesLabel, seriesKey, k));
+          }
+
+          if (panelSamples.length > plotted) {
+            noteEl.textContent = 'Chart shows first ' + plotted + ' series (of ' + panelSamples.length + '). Expand table to view all series.';
+          } else {
+            noteEl.textContent = 'Chart shows all ' + panelSamples.length + ' series.';
+          }
         }
 
         var canvas = card.querySelector('canvas');
@@ -1242,6 +1368,10 @@
                 }
               },
               y: {
+                title: {
+                  display: true,
+                  text: chartYAxisTitle
+                },
                 grid: {
                   color: '#f1f5f9'
                 }

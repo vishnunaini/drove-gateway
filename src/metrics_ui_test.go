@@ -32,4 +32,7 @@ func TestMetricsUIHandler(t *testing.T) {
 	if !strings.Contains(body, "Native/sparse histograms") {
 		t.Fatalf("body does not contain native histogram compatibility note")
 	}
+	if !strings.Contains(body, "delta sum / delta count") {
+		t.Fatalf("body does not contain interval histogram calculation")
+	}
 }
