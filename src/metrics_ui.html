@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Drove Gateway Metrics UI</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --card: #ffffff;
+      --ink: #1f2937;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --accent: #0f766e;
+      --warn: #b45309;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #f8fafc 0%, #f3f4f6 100%);
+    }
+
+    header {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--card);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 650;
+    }
+
+    .sub {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .controls {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      align-items: center;
+    }
+
+    .controls label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .controls input {
+      height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 8px;
+      width: 90px;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .controls button {
+      height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      padding: 0 10px;
+      cursor: pointer;
+    }
+
+    .controls button.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .status {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+    }
+
+    .status .warn {
+      color: var(--warn);
+      font-weight: 600;
+    }
+
+    main {
+      padding: 16px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--card);
+      padding: 12px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+
+    .title-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: baseline;
+      margin-bottom: 4px;
+    }
+
+    .metric-name {
+      font-size: 14px;
+      font-weight: 650;
+      overflow-wrap: anywhere;
+    }
+
+    .metric-type {
+      font-size: 11px;
+      color: #0b6b6f;
+      background: #ecfeff;
+      border: 1px solid #a5f3fc;
+      border-radius: 999px;
+      padding: 2px 8px;
+      white-space: nowrap;
+      text-transform: uppercase;
+    }
+
+    .metric-help {
+      margin: 0 0 8px 0;
+      color: var(--muted);
+      font-size: 12px;
+      min-height: 16px;
+    }
+
+    .canvas-wrap {
+      height: 180px;
+      margin-bottom: 8px;
+      border: 1px solid #f0f0f0;
+      border-radius: 8px;
+      padding: 6px;
+      background: #fff;
+    }
+
+    .small-note {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    details {
+      border-top: 1px dashed var(--line);
+      padding-top: 8px;
+    }
+
+    summary {
+      cursor: pointer;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 12px;
+    }
+
+    th,
+    td {
+      text-align: left;
+      border-bottom: 1px solid #f3f4f6;
+      padding: 4px 3px;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .empty {
+      border: 1px dashed var(--line);
+      padding: 16px;
+      border-radius: 10px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 640px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .canvas-wrap {
+        height: 160px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Drove Gateway Metrics UI</h1>
+    <div class="sub">Client-side parser for Prometheus text format from <code>/v1/metrics</code>.</div>
+    <div class="controls">
+      <label>
+        Refresh (seconds)
+        <input id="refreshSec" type="number" min="1" step="1" value="5">
+      </label>
+      <label>
+        Chart points
+        <input id="historyPoints" type="number" min="20" step="10" value="120">
+      </label>
+      <label>
+        Filter
+        <input id="filterText" type="text" value="" placeholder="metric name">
+      </label>
+      <button id="applyBtn" class="primary">Apply</button>
+      <button id="pauseBtn">Pause</button>
+      <button id="refreshBtn">Refresh now</button>
+    </div>
+    <div class="status">
+      <span id="statusText">Waiting for first fetch...</span>
+      <span id="lastUpdated"></span>
+      <span id="counts"></span>
+    </div>
+  </header>
+
+  <main>
+    <div id="metricsGrid" class="grid"></div>
+  </main>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var METRICS_PATH = '/v1/metrics';
+      var refreshInput = document.getElementById('refreshSec');
+      var historyInput = document.getElementById('historyPoints');
+      var filterInput = document.getElementById('filterText');
+      var applyBtn = document.getElementById('applyBtn');
+      var pauseBtn = document.getElementById('pauseBtn');
+      var refreshBtn = document.getElementById('refreshBtn');
+      var statusText = document.getElementById('statusText');
+      var lastUpdated = document.getElementById('lastUpdated');
+      var counts = document.getElementById('counts');
+      var grid = document.getElementById('metricsGrid');
+
+      var chartPalette = [
+        '#0f766e', '#0369a1', '#7c3aed', '#b45309', '#b91c1c',
+        '#334155', '#be123c', '#15803d', '#1d4ed8', '#7e22ce',
+        '#ea580c', '#475569', '#166534', '#831843', '#0e7490'
+      ];
+
+      var familyCharts = new Map();
+      var seriesHistory = new Map();
+      var isPaused = false;
+      var fetchInFlight = false;
+      var pollTimer = null;
+      var chartSeriesLimit = 16;
+
+      function schedulePolling() {
+        if (pollTimer !== null) {
+          window.clearInterval(pollTimer);
+          pollTimer = null;
+        }
+        if (isPaused) {
+          return;
+        }
+        var intervalSec = parsePositiveInt(refreshInput.value, 5);
+        pollTimer = window.setInterval(fetchAndRender, intervalSec * 1000);
+      }
+
+      function parsePositiveInt(value, fallback) {
+        var n = Number(value);
+        if (!Number.isFinite(n) || n <= 0) {
+          return fallback;
+        }
+        return Math.floor(n);
+      }
+
+      function escapeHtml(text) {
+        return String(text)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function parseLabels(raw) {
+        if (!raw || raw.length < 2) {
+          return {};
+        }
+
+        var labels = {};
+        var i = 1;
+        var max = raw.length - 1;
+
+        while (i < max) {
+          while (i < max && (raw[i] === ' ' || raw[i] === ',')) {
+            i++;
+          }
+          if (i >= max) {
+            break;
+          }
+
+          var keyStart = i;
+          while (i < max && raw[i] !== '=') {
+            i++;
+          }
+          if (i >= max) {
+            break;
+          }
+
+          var key = raw.slice(keyStart, i).trim();
+          i++;
+          if (raw[i] !== '"') {
+            break;
+          }
+          i++;
+
+          var value = '';
+          while (i < max) {
+            var ch = raw[i];
+            if (ch === '\\') {
+              i++;
+              if (i >= max) {
+                break;
+              }
+              var esc = raw[i];
+              if (esc === 'n') {
+                value += '\n';
+              } else if (esc === 't') {
+                value += '\t';
+              } else {
+                value += esc;
+              }
+              i++;
+              continue;
+            }
+            if (ch === '"') {
+              i++;
+              break;
+            }
+            value += ch;
+            i++;
+          }
+
+          if (key) {
+            labels[key] = value;
+          }
+
+          while (i < max && raw[i] !== ',') {
+            i++;
+          }
+          if (raw[i] === ',') {
+            i++;
+          }
+        }
+
+        return labels;
+      }
+
+      function labelsToString(labels) {
+        var keys = Object.keys(labels).sort();
+        if (keys.length === 0) {
+          return '';
+        }
+        var parts = [];
+        for (var i = 0; i < keys.length; i++) {
+          var key = keys[i];
+          parts.push(key + '="' + labels[key] + '"');
+        }
+        return '{' + parts.join(',') + '}';
+      }
+
+      function buildSeriesKey(metricName, labels) {
+        return metricName + labelsToString(labels);
+      }
+
+      function buildSeriesLabel(metricName, labels) {
+        var labelsText = labelsToString(labels);
+        if (!labelsText) {
+          return metricName;
+        }
+        return metricName + labelsText;
+      }
+
+      function inferFamily(metricName, familiesMap) {
+        if (familiesMap.has(metricName)) {
+          return metricName;
+        }
+        var suffixes = ['_bucket', '_sum', '_count', '_created'];
+        for (var i = 0; i < suffixes.length; i++) {
+          var suffix = suffixes[i];
+          if (metricName.endsWith(suffix)) {
+            var base = metricName.slice(0, -suffix.length);
+            if (familiesMap.has(base)) {
+              return base;
+            }
+          }
+        }
+        return metricName;
+      }
+
+      function parsePrometheusText(text) {
+        var lines = text.split(/\r?\n/);
+        var familiesMap = new Map();
+
+        function ensureFamily(name) {
+          if (!familiesMap.has(name)) {
+            familiesMap.set(name, {
+              name: name,
+              type: 'untyped',
+              help: '',
+              samples: []
+            });
+          }
+          return familiesMap.get(name);
+        }
+
+        var metricLinePattern = /^([a-zA-Z_:][a-zA-Z0-9_:]*)(\{[^}]*\})?\s+([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?|NaN|\+Inf|-Inf)(?:\s+\d+)?$/;
+
+        for (var i = 0; i < lines.length; i++) {
+          var rawLine = lines[i];
+          var line = rawLine.trim();
+          if (!line) {
+            continue;
+          }
+
+          if (line.startsWith('# HELP ')) {
+            var helpLine = line.slice(7);
+            var firstSpace = helpLine.indexOf(' ');
+            if (firstSpace > 0) {
+              var metricName = helpLine.slice(0, firstSpace);
+              var helpText = helpLine.slice(firstSpace + 1);
+              var helpFamily = ensureFamily(metricName);
+              helpFamily.help = helpText;
+            }
+            continue;
+          }
+
+          if (line.startsWith('# TYPE ')) {
+            var typeParts = line.slice(7).split(/\s+/);
+            if (typeParts.length >= 2) {
+              var typeFamily = ensureFamily(typeParts[0]);
+              typeFamily.type = typeParts[1];
+            }
+            continue;
+          }
+
+          if (line.startsWith('#')) {
+            continue;
+          }
+
+          var match = line.match(metricLinePattern);
+          if (!match) {
+            continue;
+          }
+
+          var sampleName = match[1];
+          var labelBlock = match[2] || '';
+          var rawValue = match[3];
+          var value = Number(rawValue);
+          if (Number.isNaN(value)) {
+            continue;
+          }
+
+          var labels = parseLabels(labelBlock);
+          var familyName = inferFamily(sampleName, familiesMap);
+          var sampleFamily = ensureFamily(familyName);
+          sampleFamily.samples.push({
+            metricName: sampleName,
+            labels: labels,
+            value: value
+          });
+        }
+
+        var families = Array.from(familiesMap.values());
+        families.sort(function (a, b) {
+          return a.name.localeCompare(b.name);
+        });
+
+        for (var j = 0; j < families.length; j++) {
+          families[j].samples.sort(function (a, b) {
+            return buildSeriesKey(a.metricName, a.labels).localeCompare(buildSeriesKey(b.metricName, b.labels));
+          });
+        }
+
+        return families;
+      }
+
+      function addHistoryPoint(seriesKey, point) {
+        var maxPoints = parsePositiveInt(historyInput.value, 120);
+        var points = seriesHistory.get(seriesKey);
+        if (!points) {
+          points = [];
+        }
+        points.push(point);
+        if (points.length > maxPoints) {
+          points.splice(0, points.length - maxPoints);
+        }
+        seriesHistory.set(seriesKey, points);
+      }
+
+      function updateHistory(families) {
+        var now = Date.now();
+        for (var i = 0; i < families.length; i++) {
+          var family = families[i];
+          for (var j = 0; j < family.samples.length; j++) {
+            var sample = family.samples[j];
+            var key = buildSeriesKey(sample.metricName, sample.labels);
+            addHistoryPoint(key, { x: now, y: sample.value });
+          }
+        }
+      }
+
+      function formatValue(n) {
+        if (!Number.isFinite(n)) {
+          return String(n);
+        }
+        var abs = Math.abs(n);
+        if (abs === 0) {
+          return '0';
+        }
+        if (abs >= 1000 || abs < 0.001) {
+          return n.toExponential(3);
+        }
+        return n.toFixed(4);
+      }
+
+      function timestampLabel(epochMs) {
+        var d = new Date(Number(epochMs));
+        return d.toLocaleTimeString();
+      }
+
+      function clearCharts() {
+        for (var chart of familyCharts.values()) {
+          chart.destroy();
+        }
+        familyCharts.clear();
+      }
+
+      function createDataset(seriesLabel, seriesKey, index) {
+        return {
+          label: seriesLabel,
+          data: seriesHistory.get(seriesKey) || [],
+          borderColor: chartPalette[index % chartPalette.length],
+          backgroundColor: chartPalette[index % chartPalette.length],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.2,
+          parsing: false
+        };
+      }
+
+      function renderFamilies(families) {
+        clearCharts();
+        grid.innerHTML = '';
+
+        var filter = filterInput.value.trim().toLowerCase();
+        var shownFamilies = 0;
+        var shownSeries = 0;
+
+        for (var i = 0; i < families.length; i++) {
+          var family = families[i];
+          var haystack = (family.name + ' ' + family.help).toLowerCase();
+          if (filter && haystack.indexOf(filter) === -1) {
+            continue;
+          }
+
+          shownFamilies++;
+          shownSeries += family.samples.length;
+
+          var card = document.createElement('section');
+          card.className = 'card';
+
+          var helpText = family.help || '';
+          var titleHtml = '' +
+            '<div class="title-row">' +
+            '  <div class="metric-name">' + escapeHtml(family.name) + '</div>' +
+            '  <div class="metric-type">' + escapeHtml(family.type || 'untyped') + '</div>' +
+            '</div>' +
+            '<p class="metric-help">' + escapeHtml(helpText) + '</p>' +
+            '<div class="canvas-wrap"><canvas></canvas></div>' +
+            '<div class="small-note" data-note></div>' +
+            '<details>' +
+            '  <summary>Series values (' + family.samples.length + ')</summary>' +
+            '  <table>' +
+            '    <thead><tr><th>Series</th><th>Value</th></tr></thead>' +
+            '    <tbody></tbody>' +
+            '  </table>' +
+            '</details>';
+
+          card.innerHTML = titleHtml;
+          grid.appendChild(card);
+
+          var tbody = card.querySelector('tbody');
+          for (var j = 0; j < family.samples.length; j++) {
+            var sample = family.samples[j];
+            var row = document.createElement('tr');
+            var label = buildSeriesLabel(sample.metricName, sample.labels);
+            row.innerHTML = '<td>' + escapeHtml(label) + '</td><td>' + escapeHtml(formatValue(sample.value)) + '</td>';
+            tbody.appendChild(row);
+          }
+
+          var noteEl = card.querySelector('[data-note]');
+          if (family.samples.length === 0) {
+            noteEl.textContent = 'No samples available yet for this metric family.';
+            continue;
+          }
+
+          var datasets = [];
+          var plotted = Math.min(family.samples.length, chartSeriesLimit);
+          for (var k = 0; k < plotted; k++) {
+            var plottedSample = family.samples[k];
+            var seriesKey = buildSeriesKey(plottedSample.metricName, plottedSample.labels);
+            var seriesLabel = buildSeriesLabel(plottedSample.metricName, plottedSample.labels);
+            datasets.push(createDataset(seriesLabel, seriesKey, k));
+          }
+
+          if (family.samples.length > plotted) {
+            noteEl.textContent = 'Chart shows first ' + plotted + ' series (of ' + family.samples.length + '). Expand table to view all series.';
+          } else {
+            noteEl.textContent = 'Chart shows all ' + family.samples.length + ' series.';
+          }
+
+          var canvas = card.querySelector('canvas');
+          var chart = new Chart(canvas, {
+            type: 'line',
+            data: { datasets: datasets },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              animation: false,
+              plugins: {
+                legend: {
+                  position: 'bottom',
+                  labels: {
+                    boxWidth: 10,
+                    boxHeight: 10,
+                    font: { size: 10 }
+                  }
+                },
+                tooltip: {
+                  callbacks: {
+                    title: function (items) {
+                      if (!items || items.length === 0) {
+                        return '';
+                      }
+                      return timestampLabel(items[0].parsed.x);
+                    }
+                  }
+                }
+              },
+              scales: {
+                x: {
+                  type: 'linear',
+                  ticks: {
+                    callback: function (value) {
+                      return timestampLabel(value);
+                    },
+                    maxTicksLimit: 5
+                  },
+                  grid: {
+                    color: '#f1f5f9'
+                  }
+                },
+                y: {
+                  grid: {
+                    color: '#f1f5f9'
+                  }
+                }
+              }
+            }
+          });
+
+          familyCharts.set(family.name, chart);
+        }
+
+        counts.textContent = 'Showing ' + shownFamilies + ' metric families / ' + shownSeries + ' series';
+
+        if (shownFamilies === 0) {
+          grid.innerHTML = '<div class="empty">No metrics matched the current filter.</div>';
+        }
+      }
+
+      async function fetchAndRender() {
+        if (fetchInFlight || isPaused) {
+          return;
+        }
+        fetchInFlight = true;
+        statusText.textContent = 'Fetching metrics...';
+        statusText.classList.remove('warn');
+
+        try {
+          var response = await fetch(METRICS_PATH, { cache: 'no-store' });
+          if (!response.ok) {
+            throw new Error('HTTP ' + response.status + ' from ' + METRICS_PATH);
+          }
+
+          var body = await response.text();
+          var families = parsePrometheusText(body);
+          updateHistory(families);
+          renderFamilies(families);
+
+          statusText.textContent = 'OK';
+          statusText.classList.remove('warn');
+          lastUpdated.textContent = 'Last updated: ' + new Date().toLocaleString();
+        } catch (error) {
+          statusText.textContent = 'Failed to fetch metrics: ' + error.message;
+          statusText.classList.add('warn');
+        } finally {
+          fetchInFlight = false;
+        }
+      }
+
+      applyBtn.addEventListener('click', function () {
+        schedulePolling();
+        fetchAndRender();
+      });
+
+      pauseBtn.addEventListener('click', function () {
+        isPaused = !isPaused;
+        pauseBtn.textContent = isPaused ? 'Resume' : 'Pause';
+        if (isPaused) {
+          statusText.textContent = 'Paused';
+          if (pollTimer !== null) {
+            window.clearInterval(pollTimer);
+            pollTimer = null;
+          }
+          return;
+        }
+        statusText.textContent = 'Resumed';
+        schedulePolling();
+        fetchAndRender();
+      });
+
+      refreshBtn.addEventListener('click', function () {
+        fetchAndRender();
+      });
+
+      schedulePolling();
+      fetchAndRender();
+    })();
+  </script>
+</body>
+</html>

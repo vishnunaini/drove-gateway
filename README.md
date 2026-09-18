@@ -78,6 +78,18 @@ bash scripts/gorun.sh
 
 For Debian/RPM packaging, refer to `BUILD.md` and `PACKAGING.md`.
 
+## Built-in Metrics UI
+
+Drove Gateway now exposes a lightweight, client-side metrics viewer at:
+
+* `/metrics/ui`
+
+The page fetches Prometheus text-format metrics from:
+
+* `/v1/metrics`
+
+All parsing and rendering are done in the browser (no server-side metric processing). The UI automatically shows every registered metric family and series currently exposed by the process.
+
 ## Configuration Options (`nixy.toml`)
 
 The complete behavior of Nixy is governed by `nixy.toml`. Below is the complete list of available options that can be configured:
