@@ -185,13 +185,15 @@ For HAProxy, `server-state-file` + `load-server-state-from-file` can only restor
 * Any mismatch in naming scheme (backend/server naming strategy changes) breaks restoration for those entries.
 * In fast-changing clusters, maintaining placeholder entries for every runtime-added server becomes operationally fragile.
 
-### Why Signal-Based Reconciliation Is Better
-Drove Gateway uses a signal-driven restart hook to reconcile from source-of-truth app state after proxy startup:
+### Why Command-Based Reconciliation Is Better
+Drove Gateway uses a one-shot nixy command to notify the running daemon about proxy lifecycle transitions:
 
-* `ExecStartPre` sends `SIGUSR1` to `drove.gateway.service`.
-* `ExecStartPost` sends `SIGUSR2` to `drove.gateway.service`.
-* `ExecReload` sends `SIGUSR1` and `SIGUSR2` to `drove.gateway.service` during reload lifecycle.
-* On `SIGUSR2`, Drove Gateway triggers full reconciliation and re-adds dynamic upstreams via runtime APIs.
+* `nixy -proxy-lifecycle begin -f /etc/nixy/nixy.toml` marks a proxy start or reload as beginning.
+* `nixy -proxy-lifecycle complete -f /etc/nixy/nixy.toml` marks the proxy as available and triggers full reconciliation.
+* The command reads the API address, port, and TLS mode from `nixy.toml`, posts to the running daemon, and exits without starting another daemon.
+* `-proxy-lifecycle-url` can override the daemon base URL when a TLS certificate requires a specific hostname.
+
+This avoids process-group signal propagation and provides an explicit success or failure exit status to systemd.
 
 Benefits over relying on `server-state-file`:
 
@@ -229,14 +231,14 @@ Requirements and notes:
 
 * When `haproxy_manage_global_server_state_file` is enabled together with `haproxy_reload_disabled = true`, at least one `#DROVE-SERVERS-BEGIN`/`#DROVE-SERVERS-END` block is **mandatory** in `haproxy.cfg`; drove-gateway refuses to start otherwise.
 * Your `haproxy.cfg` global section must contain `server-state-file <path>` and each backend `load-server-state-from-file global`, with `<path>` matching `haproxy_global_server_state_file_path`.
-* **Reload ordering:** systemd *appends* drop-in `ExecReload=` lines after the base `haproxy.service` reload commands, so the drop-in resets `ExecReload=` (with an empty line) and redeclares the sequence — sync, then HAProxy's own validate + `kill -USR2`, then the reconcile signal — so the config is populated **before** HAProxy re-reads it. The reproduced HAProxy reload commands must match your distro's base unit (the packaged drop-ins use the Debian/RHEL defaults; verify if you override `haproxy.service`).
+* **Reload ordering:** systemd *appends* drop-in `ExecReload=` lines after the base `haproxy.service` reload commands, so the drop-in resets `ExecReload=` (with an empty line) and redeclares the sequence — sync, lifecycle begin, then HAProxy's own validate + `kill -USR2`, then lifecycle complete — so the config is populated **before** HAProxy re-reads it. The `kill -USR2` step targets HAProxy's master process and is unrelated to nixy lifecycle notification. The reproduced HAProxy reload commands must match your distro's base unit (the packaged drop-ins use the Debian/RHEL defaults; verify if you override `haproxy.service`).
 * Health endpoint `/v1/health` exposes a `ServerStateFileUpdate` status, and metric `drove_gateway_server_state_file_update_healthy` reflects the last state file write.
 
-### Why Signal-Based Reconciliation Is Still Preferred by Default
-When reloads are enabled, the signal-based reconciliation above is the simpler and more robust default because it rebuilds runtime state from current Drove topology instead of relying on restart-time file parity. Use the managed `server-state-file` approach primarily when reloads are disabled and you need HAProxy to restore dynamic server state on its own.
+### Why Command-Based Reconciliation Is Still Preferred by Default
+When reloads are enabled, the command-based reconciliation above is the simpler and more robust default because it rebuilds runtime state from current Drove topology instead of relying on restart-time file parity. Use the managed `server-state-file` approach primarily when reloads are disabled and you need HAProxy to restore dynamic server state on its own.
 
 ### DataManager Stale State Handling (Memory + Optional Disk)
-When Drove/controller endpoints are temporarily unreachable, Drove Gateway can still reconcile proxy runtime state (for example after `SIGUSR2`) using the last metadata that previously reconciled successfully.
+When Drove/controller endpoints are temporarily unreachable, Drove Gateway can still reconcile proxy runtime state (for example after a lifecycle `complete` notification) using the last metadata that previously reconciled successfully.
 
 Why this persistence is needed:
 

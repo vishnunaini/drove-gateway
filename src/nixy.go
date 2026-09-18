@@ -9,10 +9,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"regexp"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -673,45 +671,12 @@ func proxyRestartCompleteAPI(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintln(w, "reconciliation already queued")
 }
 
-// Proxy lifecycle notifications can be delivered either through OS signals or the equivalent API:
-//
-//	SIGUSR1 -> POST /v1/proxy/restart/begin
-//	SIGUSR2 -> POST /v1/proxy/restart/complete
-//
-// Both transports invoke the same state transitions and may be used interchangeably.
-// setupSignalHandlers wires the signal transport used by the packaged systemd drop-ins.
-//
-// The haproxy.service / nginx.service systemd drop-ins shipped with Drove Gateway send:
-//   - SIGUSR1 from ExecStartPre / ExecReload: a proxy lifecycle transition is beginning; its runtime
-//     state (dynamically added upstream servers) may be reset. We record this so the transition can be tracked.
-//   - SIGUSR2 from ExecStartPost / ExecReload: the proxy is up and its runtime API is ready; trigger a full
-//     reconciliation so every dynamically managed server is re-added via the runtime API (HAProxy
-//     runtime API / NGINX Plus HTTP API), or the config is re-rendered and reloaded for plain NGINX.
-//
-// This replaces the older state-file restore script by rebuilding runtime state directly from the
-// apps Drove Gateway already knows about.
-func setupSignalHandlers() {
-	sigCh := make(chan os.Signal, 4)
-	signal.Notify(sigCh, syscall.SIGUSR1, syscall.SIGUSR2)
-	go func() {
-		for sig := range sigCh {
-			switch sig {
-			case syscall.SIGUSR1:
-				proxyRestartStarted("SIGUSR1")
-			case syscall.SIGUSR2:
-				// Keep the gate set until reloadWorker confirms that the proxy control plane
-				// is responsive. SIGUSR2 means the service transition completed, but the
-				// runtime socket/API may not be ready to reconcile yet.
-				proxyRestartCompleted("SIGUSR2")
-			}
-		}
-	}()
-}
-
 func main() {
 	configtoml := flag.String("f", "nixy.toml", "Path to config. (default nixy.toml)")
 	versionflag := flag.Bool("v", false, "prints current nixy version")
 	syncHaproxyStateConfig := flag.Bool("sync-haproxy-state-config", false, "Populate drove-managed server blocks in the HAProxy config from the server state file, then exit. Intended for systemd ExecStartPre/ExecReload.")
+	proxyLifecycleEvent := flag.String("proxy-lifecycle", "", "Notify the running nixy daemon of a proxy lifecycle event (begin or complete), then exit.")
+	proxyLifecycleURL := flag.String("proxy-lifecycle-url", "", "Base URL of the running nixy daemon for -proxy-lifecycle. Defaults to the configured address and port.")
 	flag.Parse()
 	if *versionflag {
 		fmt.Printf("version: %s\n", version)
@@ -740,6 +705,13 @@ func main() {
 	}
 
 	setupDefaultConfig()
+	if *proxyLifecycleEvent != "" {
+		if err := notifyProxyLifecycle(*proxyLifecycleEvent, *proxyLifecycleURL); err != nil {
+			logger.WithError(err).Error("failed to notify running nixy daemon of proxy lifecycle event")
+			os.Exit(1)
+		}
+		return
+	}
 	if *syncHaproxyStateConfig {
 		// One-shot mode invoked from systemd ExecStartPre/ExecReload: refresh the drove-managed
 		// server blocks in haproxy.cfg from the server state file so HAProxy can restore dynamic
@@ -793,8 +765,7 @@ func main() {
 	setupEndpointHealth()
 	setupPollEvents()
 	waitForFreshDataManagerStateAtStartup()
-	setupSignalHandlers() // handle proxy (re)start signals from the systemd drop-ins
-	reloadWorker()        //Reloader
+	reloadWorker() //Reloader
 	// forceReload()
 	logger.Info("Address:" + config.Address)
 	if config.PortWithTLS {

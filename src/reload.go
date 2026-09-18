@@ -590,7 +590,7 @@ func reloadWorker() {
 				}
 			}
 
-			// SIGUSR1 may arrive between the earlier readiness check and this point.
+			// A lifecycle begin notification may arrive between the earlier readiness check and this point.
 			// Preserve the pending reconcile and retry once the proxy is responsive again.
 			if restartInProgress, _ := getProxyRestartState(); restartInProgress {
 				continue
