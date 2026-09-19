@@ -251,7 +251,7 @@ func updateAndReloadConfig(data *RenderingData) (err error) {
 		//sleep some time for the reload to stabilize
 		time.Sleep(500 * time.Millisecond)
 	}
-	return nil
+	return err
 }
 
 func createRenderingData(data *RenderingData) {
@@ -401,12 +401,15 @@ func writeConfSync(data *RenderingData) (returnErr error) {
 	if err != nil {
 		return err
 	}
+	tmpFileClosed := false
 	defer func() {
-		err = tmpFile.Close()
-		if err != nil {
+		if tmpFileClosed {
+			return
+		}
+		if closeErr := tmpFile.Close(); closeErr != nil {
 			logger.WithFields(logrus.Fields{
 				"file":  tmpFile.Name(),
-				"error": err,
+				"error": closeErr,
 			}).Warning("Failed to close temporary file")
 		}
 	}()
@@ -443,6 +446,7 @@ func writeConfSync(data *RenderingData) (returnErr error) {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
+	tmpFileClosed = true
 	newConfigContent, err := os.ReadFile(tmpFile.Name())
 	if err != nil {
 		return err
