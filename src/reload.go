@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -87,6 +88,8 @@ func reload() (err error) {
 	data := RenderingData{}
 	createRenderingData(&data)
 	setLastSync(time.Now())
+	fullReloadRequired := isProxyLifecycleFullReloadRequired()
+	configReloaded := false
 
 	if !GlobalProxyManager.IsRuntimeAPIUpstreamUpdateEnabled() {
 		logger.Debug("Runtime API calls to update upstreams are disabled")
@@ -104,13 +107,28 @@ func reload() (err error) {
 			Metrics.CountFailedReloads.Inc()
 			return err
 		}
+		if fullReloadRequired {
+			clearProxyLifecycleFullReloadRequired()
+		}
 	} else {
 		logger.Debug("Runtime API calls to update upstreams are enabled")
 		//Use of runtime API is enabled
 		//For HAProxy, if config reload is disabled, only use API to update backends. it is responsibility fo config to maintain state across restarts e.g. with global-server-state-file. TO-DO: possible to update config only
 		//For Nginx+, ngx http_api maintains it's own state files if referenced in the running nginx config. Hence no templating is done at all when reload is disabled
 		if ConfigReloadDisabled {
-			logger.Warn(data.ProxyPlatform + ":  reload has been disabled")
+			logger.Warn(data.ProxyPlatform + ": reload has been disabled; continuing lifecycle recovery through runtime API reconciliation")
+		} else if fullReloadRequired {
+			logger.Info("Proxy lifecycle completed; performing required full config reload before runtime reconciliation")
+			err = updateAndReloadConfig(&data)
+			_ = db.UpdateReloadTimestamps(start)
+			if err != nil {
+				logger.WithFields(logrus.Fields{
+					"error": err.Error(),
+				}).Error("unable to perform required full config reload after proxy lifecycle completion. Runtime api calls to update upstreams will be skipped.")
+				return err
+			}
+			configReloaded = true
+			clearProxyLifecycleFullReloadRequired()
 		} else {
 			vhosts := db.ReadAllKnownVhosts()
 			lastKnownVhosts := db.ReadLastKnownVhosts()
@@ -137,6 +155,7 @@ func reload() (err error) {
 					}).Error("unable to update and reload " + data.ProxyPlatform + " config. Runtime api calls to update upstreams will be skipped.")
 					return err
 				}
+				configReloaded = true
 			} else {
 				logger.Debug("No changes detected in vhosts or backend names. No config update is necessary. Upstream updates will happen via " + config.ProxyPlatform + " apis")
 			}
@@ -144,6 +163,14 @@ func reload() (err error) {
 		logger.Debug("Updating upstreams via " + data.ProxyPlatform + " api")
 		if GlobalProxyManager != nil {
 			err = GlobalProxyManager.Reconcile(&data)
+			if isProxyBackendMissingError(err) && !ConfigReloadDisabled && !configReloaded {
+				logger.WithError(err).Warn("Proxy runtime is missing one or more backends/upstreams; performing one full config reload before retrying reconciliation")
+				if reloadErr := updateAndReloadConfig(&data); reloadErr != nil {
+					err = errors.Join(err, fmt.Errorf("full reload after missing proxy backend/upstream failed: %w", reloadErr))
+				} else {
+					err = GlobalProxyManager.Reconcile(&data)
+				}
+			}
 			_ = db.UpdateUpstreamAPIUpdateTimestamps(start)
 			if err != nil {
 				logger.WithFields(logrus.Fields{
