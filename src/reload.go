@@ -168,7 +168,6 @@ func reload() (err error) {
 				if reloadErr := updateAndReloadConfig(&data); reloadErr != nil {
 					err = errors.Join(err, fmt.Errorf("full reload after missing proxy backend/upstream failed: %w", reloadErr))
 				} else {
-					configReloaded = true
 					err = GlobalProxyManager.Reconcile(&data)
 				}
 			}

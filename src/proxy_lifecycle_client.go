@@ -28,7 +28,9 @@ func notifyProxyLifecycle(event, baseURL string) error {
 	if err != nil {
 		return fmt.Errorf("notify proxy lifecycle %q: %w", event, err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 
 	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, 4096))
 	if readErr != nil {

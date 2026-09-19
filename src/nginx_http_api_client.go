@@ -278,7 +278,7 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 					}
 					cancel()
 					if updateErr == nil {
-						added, deleted, updated, updateErr = manager.client.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
+						_, _, _, updateErr = manager.client.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
 					}
 				}
 				if updateErr != nil {
