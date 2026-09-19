@@ -598,8 +598,9 @@ func (manager *HaproxyManager) Reconcile(data *RenderingData) error {
 
 var proxyRestartState struct {
 	sync.RWMutex
-	inProgress bool
-	startedAt  time.Time
+	inProgress         bool
+	startedAt          time.Time
+	fullReloadRequired bool
 }
 
 func beginProxyRestart() bool {
@@ -628,6 +629,25 @@ func clearProxyRestart(startedAt time.Time) bool {
 	return true
 }
 
+func markProxyLifecycleFullReloadRequired() bool {
+	proxyRestartState.Lock()
+	defer proxyRestartState.Unlock()
+	proxyRestartState.fullReloadRequired = !ConfigReloadDisabled
+	return proxyRestartState.fullReloadRequired
+}
+
+func isProxyLifecycleFullReloadRequired() bool {
+	proxyRestartState.RLock()
+	defer proxyRestartState.RUnlock()
+	return proxyRestartState.fullReloadRequired
+}
+
+func clearProxyLifecycleFullReloadRequired() {
+	proxyRestartState.Lock()
+	defer proxyRestartState.Unlock()
+	proxyRestartState.fullReloadRequired = false
+}
+
 func proxyRestartStarted(source string) {
 	beginProxyRestart()
 	logger.WithField("source", source).Warn("Proxy lifecycle transition in progress. Upstreams will be reconciled once the proxy is back up.")
@@ -635,9 +655,11 @@ func proxyRestartStarted(source string) {
 
 func proxyRestartCompleted(source string) bool {
 	wasRestarting := beginProxyRestart()
+	fullReloadRequired := markProxyLifecycleFullReloadRequired()
 	logger.WithFields(logrus.Fields{
 		"source":                    source,
 		"proxy_restart_in_progress": wasRestarting,
+		"full_reload_required":      fullReloadRequired,
 	}).Info("Proxy lifecycle transition complete. Triggering full reconciliation.")
 
 	appliedDataManagerState := applyDataManagerStateForOfflineReconcile()

@@ -142,42 +142,47 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 		backendErr := error(nil)
 		// If we have state for this backend from the aggregated call, use it directly.
 		// This avoids making an additional API call per backend.
-		if !disableLargeBackendCountOptimisation || allServersState[backend] != nil {
+		if !disableLargeBackendCountOptimisation && allServersState[backend] != nil {
 			currentServersForBackend = allServersState[backend]
 		} else {
-			if allServersState[backend] != nil {
-				logger.Warn("Consider disabling large backend count optimisation with haproxy_disable_large_backend_count_optimisation set to true")
-			}
 			logger.WithField("backend", backend).Debug("No existing servers found for backend in aggregated state. Trying to get state for the backend directly")
 			currentServersForBackend, backendErr = manager.client.GetServersState(backend)
 			if backendErr != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
 				logger.WithField("backend", backend).Warn("Retrying to get servers state for backend after brief wait. Some backends might take time to exist after a reload")
 			waitBackendGroup:
-				select {
-				case <-ctx.Done():
-					logger.WithFields(logrus.Fields{"backend": backend}).Error("Context timeout waiting to retry get servers state for backend")
-					break waitBackendGroup
-				case <-time.After(500 * time.Millisecond):
-					currentServersForBackend, backendErr = manager.client.GetServersState(backend)
-					if backendErr == nil {
+				for backendErr != nil {
+					select {
+					case <-ctx.Done():
+						logger.WithFields(logrus.Fields{"backend": backend}).Error("Context timeout waiting to retry get servers state for backend")
 						break waitBackendGroup
-					} else {
-						logger.WithFields(logrus.Fields{"backend": backend, "error": backendErr}).Warn("Retry to get servers state for backend failed, will retry until timeout")
+					case <-time.After(500 * time.Millisecond):
+						currentServersForBackend, backendErr = manager.client.GetServersState(backend)
+						if backendErr != nil {
+							logger.WithFields(logrus.Fields{"backend": backend, "error": backendErr}).Warn("Retry to get servers state for backend failed, will retry until timeout")
+						}
 					}
 				}
+				cancel()
 			}
 		}
 
-		if err != nil {
+		if backendErr != nil {
 			reconciliationFailedBackends[backend] = true
-			// This error is often not fatal; it can mean the backend doesn't exist yet.
+			Metrics.HaproxyAPICallsFailed.WithLabelValues("get_servers_state").Inc()
+			if isHAProxyBackendMissingResponse(backendErr) {
+				missingErr := newProxyBackendMissingError(backend, backendErr)
+				err = errors.Join(err, missingErr)
+				logger.WithFields(logrus.Fields{
+					"backend": backend,
+					"error":   backendErr,
+				}).Warn("HAProxy backend does not exist; skipping runtime server reconciliation for this backend")
+				continue
+			}
 			logger.WithFields(logrus.Fields{
 				"backend": backend,
 				"error":   backendErr,
-			}).Warning("Could not get servers for backend, it may be new. Proceeding with reconciliation.")
-			Metrics.HaproxyAPICallsFailed.WithLabelValues("get_servers_state").Inc()
+			}).Warning("Could not get servers for backend; proceeding with an empty server list")
 			// Pass an empty slice so reconciliation can proceed to add servers.
 			currentServersForBackend = []*runtime_models.RuntimeServer{}
 		} else {
@@ -186,6 +191,9 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 
 		if backendErr = manager.reconcileBackend(backend, hosts, currentServersForBackend); backendErr != nil {
 			reconciliationFailedBackends[backend] = true
+			if isHAProxyBackendMissingResponse(backendErr) {
+				err = errors.Join(err, newProxyBackendMissingError(backend, backendErr))
+			}
 			logger.WithFields(logrus.Fields{
 				"backend": backend,
 				"error":   backendErr,
@@ -454,7 +462,8 @@ func (manager *HaproxyManager) addNewServer(backend, serverName string, host Hos
 
 	serverEndpoint := formatRuntimeServerEndpoint(host.Host, host.Port)
 
-	if err := manager.client.AddServer(backend, serverName, fmt.Sprintf("%s %s", serverEndpoint, attributes_string)); err != nil {
+	err := manager.client.AddServer(backend, serverName, fmt.Sprintf("%s %s", serverEndpoint, attributes_string))
+	if err != nil {
 		srvr, runErr := manager.client.GetServerState(backend, serverName)
 		if runErr == nil {
 			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "srvr": srvr}).Info("Server already exists after failed add attempt. Proceeding to update existing server.")
@@ -462,27 +471,26 @@ func (manager *HaproxyManager) addNewServer(backend, serverName string, host Hos
 		} else {
 			//wait for backend to exist in case of recent reload
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
 			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Debug("Retrying to add server after brief wait. Some backends might take time to exist after a reload")
 		waitAddGroup:
-			select {
-			case <-ctx.Done():
-				logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Error("Context timeout waiting to retry add server")
-				break waitAddGroup
-			case <-time.After(500 * time.Millisecond):
-				err = manager.client.AddServer(backend, serverName, fmt.Sprintf("%s %s", serverEndpoint, attributes_string))
-				time.Sleep(10 * time.Millisecond)
-				srvr, runErr = manager.client.GetServerState(backend, serverName)
-				if err == nil {
+			for err != nil {
+				select {
+				case <-ctx.Done():
+					logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Error("Context timeout waiting to retry add server")
 					break waitAddGroup
-				} else if runErr == nil {
-					logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "srvr": srvr}).Info("Server added successfully after retry")
-					err = nil
-					break waitAddGroup
-				} else {
-					logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Warn("Retry to add server failed, will retry until timeout")
+				case <-time.After(500 * time.Millisecond):
+					err = manager.client.AddServer(backend, serverName, fmt.Sprintf("%s %s", serverEndpoint, attributes_string))
+					time.Sleep(10 * time.Millisecond)
+					srvr, runErr = manager.client.GetServerState(backend, serverName)
+					if err != nil && runErr == nil {
+						logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "srvr": srvr}).Info("Server added successfully after retry")
+						err = nil
+					} else if err != nil {
+						logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Warn("Retry to add server failed, will retry until timeout")
+					}
 				}
 			}
+			cancel()
 		}
 		Metrics.HaproxyAPICallsFailed.WithLabelValues("add_server").Inc()
 		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")

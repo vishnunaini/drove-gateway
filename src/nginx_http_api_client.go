@@ -88,6 +88,7 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 	reconciledApps := make(map[string]bool)
 	reconciliationFailedApps := make(map[string]bool)
 	err := error(nil)
+	missingUpstreamErr := error(nil)
 
 	for _, app := range data.Apps {
 		if !isHTTPHostGroup(app.Hosts) || app.Vhost == "" || len(app.Hosts) == 0 {
@@ -134,6 +135,32 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 		err = manager.client.CheckIfUpstreamExists(upstreamtocheck)
 		if err != nil {
 			Metrics.NginxAPICallsFailed.WithLabelValues("check_if_upstream_exists").Inc()
+			if isNginxUpstreamMissingResponse(err) {
+				logger.WithField("vhost", upstreamtocheck).Warn("NGINX Plus upstream is not visible yet; waiting briefly for reload convergence")
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			waitUpstreamGroup:
+				for isNginxUpstreamMissingResponse(err) {
+					select {
+					case <-ctx.Done():
+						break waitUpstreamGroup
+					default:
+						time.Sleep(5 * time.Millisecond)
+						err = manager.client.CheckIfUpstreamExists(upstreamtocheck)
+					}
+				}
+				cancel()
+			}
+			if err != nil && isNginxUpstreamMissingResponse(err) {
+				reconciliationFailedApps[app.Vhost] = true
+				missingUpstreamErr = errors.Join(missingUpstreamErr, newProxyBackendMissingError(upstreamtocheck, err))
+				logger.WithFields(logrus.Fields{
+					"vhost": upstreamtocheck,
+					"error": err,
+				}).Warn("NGINX Plus upstream does not exist; skipping runtime server reconciliation for this upstream")
+				continue
+			}
+		}
+		if err != nil {
 			// First add atleast one server to initialise upstream to support UpdateHTTPServers
 			logger.WithFields(logrus.Fields{
 				"Adding fresh upstream for": upstreamtocheck,
@@ -146,6 +173,33 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 			}
 			//Adding first server for server ID 0. ID 0 needs to be updated if state file is resurrected when a vhost gets resurrected. Create ID 0 otherwise.
 			err = manager.client.UpdateHTTPServer(upstreamtocheck, finalformattedServers[0])
+			if isNginxUpstreamMissingResponse(err) {
+				logger.WithField("vhost", upstreamtocheck).Warn("NGINX Plus upstream disappeared before server update; waiting briefly for reload convergence")
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			waitUpstreamUpdateGroup:
+				for isNginxUpstreamMissingResponse(err) {
+					select {
+					case <-ctx.Done():
+						break waitUpstreamUpdateGroup
+					default:
+						time.Sleep(5 * time.Millisecond)
+						err = manager.client.CheckIfUpstreamExists(upstreamtocheck)
+					}
+				}
+				cancel()
+				if err == nil {
+					err = manager.client.UpdateHTTPServer(upstreamtocheck, finalformattedServers[0])
+				}
+			}
+			if isNginxUpstreamMissingResponse(err) {
+				reconciliationFailedApps[app.Vhost] = true
+				missingUpstreamErr = errors.Join(missingUpstreamErr, newProxyBackendMissingError(upstreamtocheck, err))
+				logger.WithFields(logrus.Fields{
+					"vhost": upstreamtocheck,
+					"error": err,
+				}).Warn("NGINX Plus upstream disappeared before server update; skipping runtime reconciliation")
+				continue
+			}
 			logger.WithFields(logrus.Fields{"Adding upstream": manager.UnmarshalServerStruct(finalformattedServers[0]), "vhost": upstreamtocheck}).Debug("Adding first upstream server")
 			// Now upstream should have servers, update earlier state to let UpdateHTTPServers take over
 			//But wait from some time for nginx to actually update it's state. Consecutive calls would still return a 404 if you don't wait long enough
@@ -190,11 +244,6 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 			Metrics.NginxAPICallsSuccessful.WithLabelValues("check_if_upstream_exists").Inc()
 			logger.WithFields(logrus.Fields{"updating UpdateHTTPServers for": upstreamtocheck}).Debug("upstream exists, updating servers")
 			added, deleted, updated, updateErr := manager.client.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
-			if updateErr != nil {
-				Metrics.NginxAPICallsFailed.WithLabelValues("update_http_servers").Inc()
-			} else {
-				Metrics.NginxAPICallsSuccessful.WithLabelValues("update_http_servers").Inc()
-			}
 			if added != nil {
 				logger.WithFields(logrus.Fields{
 					"vhost":           upstreamtocheck,
@@ -214,11 +263,41 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 				}).Info("nginx upstreams updated")
 			}
 			if updateErr != nil {
-				logger.WithFields(logrus.Fields{
-					"vhost": upstreamtocheck,
-					"error": updateErr,
-				}).Error("unable to update nginx upstreams")
-				err = errors.Join(err, updateErr)
+				if isNginxUpstreamMissingResponse(updateErr) {
+					logger.WithField("vhost", upstreamtocheck).Warn("NGINX Plus upstream disappeared during server reconciliation; waiting briefly for reload convergence")
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				waitUpstreamReconcileGroup:
+					for isNginxUpstreamMissingResponse(updateErr) {
+						select {
+						case <-ctx.Done():
+							break waitUpstreamReconcileGroup
+						default:
+							time.Sleep(5 * time.Millisecond)
+							updateErr = manager.client.CheckIfUpstreamExists(upstreamtocheck)
+						}
+					}
+					cancel()
+					if updateErr == nil {
+						added, deleted, updated, updateErr = manager.client.UpdateHTTPServers(upstreamtocheck, finalformattedServers)
+					}
+				}
+				if updateErr != nil {
+					Metrics.NginxAPICallsFailed.WithLabelValues("update_http_servers").Inc()
+					logger.WithFields(logrus.Fields{
+						"vhost": upstreamtocheck,
+						"error": updateErr,
+					}).Error("unable to update nginx upstreams")
+					reconciliationFailedApps[app.Vhost] = true
+					if isNginxUpstreamMissingResponse(updateErr) {
+						missingUpstreamErr = errors.Join(missingUpstreamErr, newProxyBackendMissingError(upstreamtocheck, updateErr))
+					} else {
+						err = errors.Join(err, updateErr)
+					}
+				} else {
+					Metrics.NginxAPICallsSuccessful.WithLabelValues("update_http_servers").Inc()
+				}
+			} else {
+				Metrics.NginxAPICallsSuccessful.WithLabelValues("update_http_servers").Inc()
 			}
 		} else {
 			reconciliationFailedApps[app.Vhost] = true
@@ -239,7 +318,7 @@ func (manager *NginxAPIManager) ReconcileAllVhosts(data *RenderingData) error {
 			resultLabel = "error"
 			GlobalProxyManager.UpdateAPIUpdatesHealthStatus(false, errors.New("failed to reconcile any nginx plus vhosts").Error())
 		}
-		return errors.Join(errors.New("failed to reconcile nginx plus vhosts"), err)
+		return errors.Join(errors.New("failed to reconcile nginx plus vhosts"), err, missingUpstreamErr)
 	} else if len(reconciliationFailedApps) == 0 {
 		resultLabel = "success"
 		logger.Info("Successfully reconciled all nginx plus vhosts")

@@ -14,6 +14,28 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+var errProxyBackendMissing = errors.New("proxy backend or upstream is missing")
+
+func newProxyBackendMissingError(backend string, cause error) error {
+	return fmt.Errorf("%w: %s: %v", errProxyBackendMissing, backend, cause)
+}
+
+func isProxyBackendMissingError(err error) bool {
+	return errors.Is(err, errProxyBackendMissing)
+}
+
+func isHAProxyBackendMissingResponse(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no such backend")
+}
+
+func isNginxUpstreamMissingResponse(err error) bool {
+	if err == nil {
+		return false
+	}
+	errorText := strings.ToLower(err.Error())
+	return strings.Contains(errorText, "error.code=upstreamnotfound") || strings.Contains(errorText, "upstream not found")
+}
+
 type ProxyManager interface {
 	GenerateStableBackendName(app App, groupName string) string
 	GenerateStableServerName(host Host) string
