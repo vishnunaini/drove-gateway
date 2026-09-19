@@ -39,7 +39,11 @@ type serverStateEntry struct {
 // from the current HAProxy server state file. It is intended to be invoked from systemd
 // ExecStartPre / ExecReload (via the -sync-haproxy-state-config flag) before HAProxy (re)starts,
 // so that the servers referenced by the server state file already exist in the loaded config.
-func syncHaproxyServerStateConfigBlocks() error {
+func syncHaproxyServerStateConfigBlocks() (err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "syncHaproxyServerStateConfigBlocks", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	if config.ProxyPlatform != "haproxy" {
 		return errors.New("-sync-haproxy-state-config is only valid when proxy_platform is haproxy")
 	}
@@ -107,10 +111,19 @@ func syncHaproxyServerStateConfigBlocks() error {
 // rewriteServerStateConfigBlocks replaces the content of each drove-managed block with the desired
 // server lines for that block's backend. It returns the rewritten config and the number of blocks
 // found. Lines outside the markers are preserved verbatim.
-func rewriteServerStateConfigBlocks(content string, serversByBackend map[string][]serverStateEntry) (string, int, error) {
+func rewriteServerStateConfigBlocks(content string, serversByBackend map[string][]serverStateEntry) (rewritten string, blockCount int, err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "rewriteServerStateConfigBlocks", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
+	lineEnding := "\n"
+	if strings.Contains(content, "\r\n") {
+		lineEnding = "\r\n"
+		content = strings.ReplaceAll(content, "\r\n", "\n")
+	}
 	lines := strings.Split(content, "\n")
 	out := make([]string, 0, len(lines))
-	blockCount := 0
+	blockCount = 0
 
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
@@ -162,7 +175,7 @@ func rewriteServerStateConfigBlocks(content string, serversByBackend map[string]
 		i = end
 	}
 
-	return strings.Join(out, "\n"), blockCount, nil
+	return strings.Join(out, lineEnding), blockCount, nil
 }
 
 // formatServerEndpoint returns a host:port endpoint suitable for HAProxy server lines.
@@ -183,7 +196,11 @@ func formatServerEndpoint(addr, port string) string {
 
 // parseServerStateFileByBackend parses a HAProxy "show servers state" formatted file and returns
 // the servers grouped by backend name.
-func parseServerStateFileByBackend(path string) (map[string][]serverStateEntry, error) {
+func parseServerStateFileByBackend(path string) (servers map[string][]serverStateEntry, err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "parseServerStateFileByBackend", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	if path == "" {
 		return nil, errors.New("haproxy_global_server_state_file_path is not configured")
 	}
@@ -315,7 +332,11 @@ func haproxyServerStateBlocksPresent(configPath string) (bool, error) {
 
 // writeHaproxyConfigAtomic writes the HAProxy config via a temp file + rename in the same directory
 // so HAProxy never reads a partially written config.
-func writeHaproxyConfigAtomic(configPath string, content []byte) error {
+func writeHaproxyConfigAtomic(configPath string, content []byte) (err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "writeHaproxyConfigAtomic", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	currentInfo, err := os.Stat(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to stat existing haproxy config at %q: %w", configPath, err)

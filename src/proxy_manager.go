@@ -42,7 +42,7 @@ func (pmgr *NginxProxyManager) CheckConfig(testConfigPath string) error {
 	head := args[0]
 	args = args[1:]
 	args = append(args, ProgramCmdConfFileArg, testConfigPath, ProgramCmdConfTestArg)
-	return runCommand(head, args...)
+	return runValidationCommand(head, args...)
 }
 
 func (pmgr *NginxProxyManager) GetTempFilePattern() string {
@@ -64,7 +64,8 @@ func (pmgr *NginxProxyManager) IsRuntimeAPIUpstreamUpdateEnabled() bool {
 func (pmgr *NginxProxyManager) IsControlPlaneResponsive() bool {
 	// NGINX Plus runtime API mode: wait until the API socket is reachable.
 	if pmgr.config.Nginxplusapiaddr != "" {
-		conn, err := net.DialTimeout("tcp", pmgr.config.Nginxplusapiaddr, 500*time.Millisecond)
+		timeout := time.Duration(pmgr.config.ProxyControlPlaneDialTimeoutMS) * time.Millisecond
+		conn, err := net.DialTimeout("tcp", pmgr.config.Nginxplusapiaddr, timeout)
 		if err != nil {
 			return false
 		}
@@ -75,13 +76,16 @@ func (pmgr *NginxProxyManager) IsControlPlaneResponsive() bool {
 	return isCommandResponsive(pmgr.config.NginxCmd)
 }
 
-func (pmgr *NginxProxyManager) Reload() error {
+func (pmgr *NginxProxyManager) Reload() (err error) {
+	if finishTimer := startProxyErrorFunctionTimer("nginx", "NginxProxyManager.Reload", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	// This is to allow arguments as well. Example "docker exec nginx..."
 	args := strings.Fields(pmgr.config.NginxCmd)
 	head := args[0]
 	args = args[1:]
 	args = append(args, "-s", "reload")
-	logger.WithFields(logrus.Fields{"cmd": head, "args": args}).Info("Reloading nginx")
 	return runCommand(head, args...)
 }
 
@@ -112,7 +116,7 @@ func (pmgr *HAProxyManager) CheckConfig(testConfigPath string) error {
 	head := args[0]
 	args = args[1:]
 	args = append(args, ProgramCmdConfFileArg, testConfigPath, ProgramCmdConfTestArg)
-	return runCommand(head, args...)
+	return runValidationCommand(head, args...)
 }
 
 func (pmgr *HAProxyManager) GetTempFilePattern() string {
@@ -142,8 +146,9 @@ func (pmgr *HAProxyManager) IsControlPlaneResponsive() bool {
 	if pmgr.config.HaproxySocketAddr == "" {
 		return false
 	}
+	timeout := time.Duration(pmgr.config.ProxyControlPlaneDialTimeoutMS) * time.Millisecond
 	if IsUnixSocketAddr(pmgr.config.HaproxySocketAddr) {
-		conn, err := net.DialTimeout("unix", pmgr.config.HaproxySocketAddr, 500*time.Millisecond)
+		conn, err := net.DialTimeout("unix", pmgr.config.HaproxySocketAddr, timeout)
 		if err != nil {
 			return false
 		}
@@ -151,7 +156,7 @@ func (pmgr *HAProxyManager) IsControlPlaneResponsive() bool {
 		return true
 	}
 	addr := strings.TrimPrefix(strings.TrimPrefix(pmgr.config.HaproxySocketAddr, "ipv4@"), "ipv6@")
-	conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return false
 	}
@@ -159,8 +164,12 @@ func (pmgr *HAProxyManager) IsControlPlaneResponsive() bool {
 	return true
 }
 
-func (pmgr *HAProxyManager) Reload() error {
-	// This is to allow arguments as well. Example "docker exec nginx..." or SIGUSR2 to master worker
+func (pmgr *HAProxyManager) Reload() (err error) {
+	if finishTimer := startProxyErrorFunctionTimer("haproxy", "HAProxyManager.Reload", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
+	// This is to allow arguments as well. Example "docker exec nginx..." or a master-worker reload command.
 	args := strings.Fields(pmgr.config.HaproxyReloadCmd)
 	head := args[0]
 	args = args[1:]
@@ -250,11 +259,15 @@ func setupGlobalProxyManager() ProxyManager {
 }
 
 // runCommand executes a command and returns a formatted error if it fails.
-func runCommand(head string, args ...string) error {
+func runCommand(head string, args ...string) (err error) {
+	if finishTimer := startErrorFunctionTimer("runCommand", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	cmd := exec.Command(head, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		msg := fmt.Sprint(err) + ": " + stderr.String()
 		return errors.New(msg)
@@ -262,11 +275,27 @@ func runCommand(head string, args ...string) error {
 	return nil
 }
 
+// runValidationCommand treats the validator exit status as authoritative. HAProxy and NGINX
+// commonly write warnings to stderr while returning success; only a nonzero exit or signal is a
+// validation failure.
+func runValidationCommand(head string, args ...string) error {
+	return runCommand(head, args...)
+}
+
 func isCommandResponsive(commandLine string) bool {
+	metricResult := "success"
+	if finishTimer := startFunctionTimer("isCommandResponsive"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
 	parts := strings.Fields(commandLine)
 	if len(parts) == 0 {
+		metricResult = "error"
 		return false
 	}
 	_, err := exec.LookPath(parts[0])
+	if err != nil {
+		metricResult = "error"
+	}
 	return err == nil
 }

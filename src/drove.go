@@ -51,6 +51,7 @@ type DroveClient struct {
 	namespace  string
 	syncPoint  CurrSyncPoint
 	httpClient *http.Client
+	pollMu     sync.Mutex // Serializes scheduled, forced, and startup syncs for this namespace.
 }
 
 type CurrSyncPoint struct {
@@ -60,6 +61,7 @@ type CurrSyncPoint struct {
 
 var droveClients map[string]*DroveClient
 var droveClientsMu sync.RWMutex
+var endpointHealthLocks sync.Map
 
 func getHealthyEndpointForNamespace(namespace string) (string, bool) {
 	health.RLock()
@@ -102,7 +104,10 @@ func leaderController(endpoint string) *LeaderController {
 	return controllerHost
 }
 
-func fetchRecentEvents(httpClient *http.Client, syncPoint *CurrSyncPoint, namespace string) (*DroveEventSummary, error) {
+func fetchRecentEvents(httpClient *http.Client, lastSyncTime int64, namespace string) (summary *DroveEventSummary, err error) {
+	if finishTimer := startErrorFunctionTimer("fetchRecentEvents", &err); finishTimer != nil {
+		defer finishTimer()
+	}
 
 	droveConfig, err := db.ReadDroveConfig(namespace)
 	if err != nil {
@@ -122,7 +127,7 @@ func fetchRecentEvents(httpClient *http.Client, syncPoint *CurrSyncPoint, namesp
 	Metrics.GaugeAllEndpointsDown.WithLabelValues(namespace).Set(0)
 
 	// fetch all apps and tasks with a single request.
-	req, err := http.NewRequest("GET", endpoint+"/apis/v1/cluster/events/summary?lastSyncTime="+fmt.Sprint(syncPoint.LastSyncTime), nil)
+	req, err := http.NewRequest("GET", endpoint+"/apis/v1/cluster/events/summary?lastSyncTime="+fmt.Sprint(lastSyncTime), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +160,6 @@ func fetchRecentEvents(httpClient *http.Client, syncPoint *CurrSyncPoint, namesp
 		return nil, errors.New("events API call failed. message: " + newEventsApiResponse.Message)
 	}
 
-	syncPoint.LastSyncTime = newEventsApiResponse.EventSummary.LastSyncTime
 	return &(newEventsApiResponse.EventSummary), nil
 }
 
@@ -235,7 +239,15 @@ func rememberDataManagerStateAndQueueReconcile(source string) {
 }
 
 func pollingHandler(droveClient *DroveClient, appsConfigUpdateChannel chan<- bool, waitGroup *sync.WaitGroup) {
+	metricResult := "unchanged"
+	if finishTimer := startFunctionTimer("pollingHandler"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
 	defer waitGroup.Done()
+	droveClient.pollMu.Lock()
+	defer droveClient.pollMu.Unlock()
+
 	appsRefreshed := false
 	namespace := droveClient.namespace
 	logger.WithFields(logrus.Fields{
@@ -243,18 +255,26 @@ func pollingHandler(droveClient *DroveClient, appsConfigUpdateChannel chan<- boo
 		"namespace": namespace,
 	}).Debug("Syncing...")
 
-	droveClient.syncPoint.Lock()
-	defer droveClient.syncPoint.Unlock()
+	// Only protect the event cursor itself; controller I/O runs under pollMu, not this lock.
+	droveClient.syncPoint.RLock()
+	lastSyncTime := droveClient.syncPoint.LastSyncTime
+	droveClient.syncPoint.RUnlock()
 
 	leaderShifted := refreshLeaderData(namespace)
-	eventSummary, err := fetchRecentEvents(droveClient.httpClient, &droveClient.syncPoint, namespace)
+	eventSummary, err := fetchRecentEvents(droveClient.httpClient, lastSyncTime, namespace)
 	appsConfigUpdateNeeded := false
 	if err != nil {
+		metricResult = "error"
 		logger.WithFields(logrus.Fields{
 			"error":     err.Error(),
 			"namespace": namespace,
 		}).Error("unable to sync events from drove")
 	} else {
+		// Advance the cursor only after a complete, successful event response.
+		droveClient.syncPoint.Lock()
+		droveClient.syncPoint.LastSyncTime = eventSummary.LastSyncTime
+		droveClient.syncPoint.Unlock()
+
 		if len(eventSummary.EventsCount) > 0 {
 			logger.WithFields(logrus.Fields{
 				"events":    eventSummary.EventsCount,
@@ -278,13 +298,20 @@ func pollingHandler(droveClient *DroveClient, appsConfigUpdateChannel chan<- boo
 		}
 	}
 	if appsConfigUpdateNeeded || leaderShifted {
-		appsRefreshed, _ = refreshApps(droveClient.httpClient, namespace, leaderShifted)
+		var refreshSuccess bool
+		appsRefreshed, refreshSuccess = refreshApps(droveClient.httpClient, namespace, leaderShifted)
+		if !refreshSuccess {
+			metricResult = "error"
+		} else if appsRefreshed {
+			metricResult = "changed"
+		}
 	} else {
 		logger.Debug("No change in leader as well as apps")
 	}
 	appsConfigUpdateChannel <- appsRefreshed
 }
 func pollingEvents() {
+	// Each namespace is polled concurrently; pollMu prevents overlap with startup or forced syncs.
 	var waitGroup sync.WaitGroup
 
 	droveClientsMu.RLock()
@@ -412,6 +439,11 @@ func waitForFreshDataManagerStateAtStartup() {
 }
 
 func tryLoadFreshDataManagerStateFromControllersOnce() map[string]bool {
+	metricResult := "success"
+	if finishTimer := startFunctionTimer("tryLoadFreshDataManagerStateFromControllersOnce"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
 	healthCheckClient := newHealthCheckClient()
 
 	dataManagerUpdated := false
@@ -428,10 +460,11 @@ func tryLoadFreshDataManagerStateFromControllersOnce() map[string]bool {
 			continue
 		}
 
-		droveClient.syncPoint.Lock()
+		// Startup refresh shares the same per-namespace exclusion as scheduled polling.
+		droveClient.pollMu.Lock()
 		leaderShifted := refreshLeaderData(namespace)
 		appsUpdated, refreshSuccess := refreshApps(droveClient.httpClient, namespace, leaderShifted)
-		droveClient.syncPoint.Unlock()
+		droveClient.pollMu.Unlock()
 
 		if refreshSuccess {
 			syncedNamespaces[namespace] = true
@@ -444,6 +477,9 @@ func tryLoadFreshDataManagerStateFromControllersOnce() map[string]bool {
 
 	if dataManagerUpdated {
 		rememberDataManagerStateAndQueueReconcile("startup")
+	}
+	if len(syncedNamespaces) != len(config.DroveNamespaces) {
+		metricResult = "partial"
 	}
 
 	return syncedNamespaces
@@ -472,21 +508,33 @@ func restoreDataManagerStateForUnavailableNamespaces(namespaces []string) bool {
 }
 
 func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
-	health.Lock()
-	defer health.Unlock()
+	metricResult := "success"
+	if finishTimer := startFunctionTimer("endpointHealthHandler"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
+	lockValue, _ := endpointHealthLocks.LoadOrStore(namespace, &sync.Mutex{})
+	namespaceLock := lockValue.(*sync.Mutex)
+	namespaceLock.Lock()
+	defer namespaceLock.Unlock()
+
+	health.RLock()
+	endpoints := append([]EndpointStatus(nil), health.NamespaceEndpoints[namespace]...)
+	nsHealth := health.NamespaceHealth[namespace]
+	health.RUnlock()
 
 	healthyCount := 0
-	configuredCount := len(health.NamespaceEndpoints[namespace])
+	configuredCount := len(endpoints)
 
-	for i, es := range health.NamespaceEndpoints[namespace] {
+	for i, es := range endpoints {
 		req, err := http.NewRequest("GET", es.Endpoint+"/apis/v1/ping", nil)
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error":    err.Error(),
 				"endpoint": es.Endpoint,
 			}).Error("an error occurred creating endpoint health request")
-			health.NamespaceEndpoints[namespace][i].Healthy = false
-			health.NamespaceEndpoints[namespace][i].Message = err.Error()
+			endpoints[i].Healthy = false
+			endpoints[i].Message = err.Error()
 			continue
 		}
 		droveConfig, err := db.ReadDroveConfig(es.Namespace)
@@ -495,8 +543,8 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 				"error":    err,
 				"endpoint": es.Endpoint,
 			}).Error("an error occurred reading drove config for health request")
-			health.NamespaceEndpoints[namespace][i].Healthy = false
-			health.NamespaceEndpoints[namespace][i].Message = err.Error()
+			endpoints[i].Healthy = false
+			endpoints[i].Message = err.Error()
 			continue
 		}
 		if droveConfig.User != "" {
@@ -512,19 +560,19 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 				"endpoint":  es.Endpoint,
 				"namespace": namespace,
 			}).Error("endpoint is down")
-			go Metrics.CountEndpointDownErrors.WithLabelValues(namespace).Inc()
-			health.NamespaceEndpoints[namespace][i].Healthy = false
-			health.NamespaceEndpoints[namespace][i].Message = err.Error()
+			Metrics.CountEndpointDownErrors.WithLabelValues(namespace).Inc()
+			endpoints[i].Healthy = false
+			endpoints[i].Message = err.Error()
 			continue
 		}
 		_ = resp.Body.Close()
 		if resp.StatusCode != 200 {
-			health.NamespaceEndpoints[namespace][i].Healthy = false
-			health.NamespaceEndpoints[namespace][i].Message = resp.Status
+			endpoints[i].Healthy = false
+			endpoints[i].Message = resp.Status
 			continue
 		}
-		health.NamespaceEndpoints[namespace][i].Healthy = true
-		health.NamespaceEndpoints[namespace][i].Message = "OK"
+		endpoints[i].Healthy = true
+		endpoints[i].Message = "OK"
 		healthyCount++
 		logger.WithFields(logrus.Fields{
 			"host":      es.Endpoint,
@@ -533,7 +581,6 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 	}
 
 	// Set the overall health status for the namespace
-	nsHealth := health.NamespaceHealth[namespace]
 	if healthyCount == configuredCount {
 		nsHealth.Healthy = true
 		nsHealth.Message = "All endpoints are healthy"
@@ -544,7 +591,14 @@ func endpointHealthHandler(healthCheckClient *http.Client, namespace string) {
 		nsHealth.Healthy = false
 		nsHealth.Message = "All endpoints are down"
 	}
+	if healthyCount != configuredCount {
+		metricResult = "degraded"
+	}
+
+	health.Lock()
+	health.NamespaceEndpoints[namespace] = endpoints
 	health.NamespaceHealth[namespace] = nsHealth
+	health.Unlock()
 
 	Metrics.GaugeConfiguredEndpoints.WithLabelValues(namespace).Set(float64(configuredCount))
 	Metrics.GaugeHealthyEndpoints.WithLabelValues(namespace).Set(float64(healthyCount))
@@ -567,7 +621,11 @@ func setupEndpointHealth() {
 	}
 }
 
-func fetchApps(httpClient *http.Client, droveConfig DroveConfig, jsonapps *DroveApps) error {
+func fetchApps(httpClient *http.Client, droveConfig DroveConfig, jsonapps *DroveApps) (err error) {
+	if finishTimer := startErrorFunctionTimer("fetchApps", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	endpoint, ok := getHealthyEndpointForNamespace(droveConfig.Name)
 	if !ok {
 		err := errors.New("all endpoints are down")
@@ -615,8 +673,11 @@ func matchingVhost(vHost string, realms []string) bool {
 // vhosts should be case insensitive as per standards. altough nginx is case insensitive, some other proxies like haproxy are not as they expect upstreams to handle it.
 // Also ensure routing tag values are grouped case insensitively.
 func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vhosts) bool {
-	config.Lock()
-	defer config.Unlock()
+	metricResult := "changed"
+	if finishTimer := startFunctionTimer("syncAppsAndVhosts"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
 	apps := make(map[string]App)
 	var realms = []string{}
 	if len(droveConfig.Realm) > 0 {
@@ -742,17 +803,20 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 	// Not all events bring changes, so lets see if anything is new.
 	eq := reflect.DeepEqual(apps, currentApps)
 	if eq {
+		metricResult = "unchanged"
 		return true
 	}
 
 	err := db.UpdateApps(droveConfig.Name, apps)
 	if err != nil {
+		metricResult = "error"
 		logger.Error("Error while updating apps for namespace" + droveConfig.Name)
 		return true
 	}
 
 	er = db.UpdateKnownVhosts(droveConfig.Name, *vhosts)
 	if er != nil {
+		metricResult = "error"
 		logger.Error("Error while updating KnowVhosts for namespace" + droveConfig.Name)
 		return true
 	}
@@ -760,10 +824,16 @@ func syncAppsAndVhosts(droveConfig DroveConfig, jsonapps *DroveApps, vhosts *Vho
 }
 
 func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) (bool, bool) {
+	metricResult := "changed"
+	if finishTimer := startFunctionTimer("refreshApps"); finishTimer != nil {
+		defer func() { finishTimer(metricResult) }()
+	}
+
 	logger.Trace("Refreshing Apps Data for namespace " + namespace)
 	start := time.Now()
 	droveConfig, er := db.ReadDroveConfig(namespace)
 	if er != nil {
+		metricResult = "error"
 		logger.WithFields(logrus.Fields{
 			"namespace": namespace,
 		}).Error("Error loading drove config")
@@ -775,16 +845,18 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 	vhosts.Vhosts = map[string]bool{}
 	err := fetchApps(httpClient, droveConfig, &jsonapps)
 	if err != nil || jsonapps.Status != "SUCCESS" {
+		metricResult = "error"
 		if err != nil {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to sync from drove")
 		}
-		go Metrics.CountDroveAppSyncErrors.WithLabelValues(namespace).Inc()
+		Metrics.CountDroveAppSyncErrors.WithLabelValues(namespace).Inc()
 		return false, false
 	}
 	equal := syncAppsAndVhosts(droveConfig, &jsonapps, &vhosts)
 	if equal && !leaderShifted {
+		metricResult = "unchanged"
 		logger.Trace("no relevant App Data changes")
 		return false, true
 	}
@@ -796,7 +868,7 @@ func refreshApps(httpClient *http.Client, namespace string, leaderShifted bool) 
 	}).Debug("Apps Data change required because of") //logging exact reason of potential reload
 
 	elapsed := time.Since(start)
-	go observeAppRefreshTimeMetric(namespace, elapsed)
+	observeAppRefreshTimeMetric(namespace, elapsed)
 	logger.WithFields(logrus.Fields{
 		"took": elapsed,
 	}).Debug("Apps update")

@@ -13,6 +13,13 @@ xproxy = ""
 # If unresponsive longer than this, /v1/health reports ProxyControlPlane unhealthy.
 #proxy_control_plane_timeout_sec = 30
 
+# Maximum time to block reconciliation for a proxy restart (seconds).
+# Defaults to 2x proxy_control_plane_timeout_sec, then force-clears the restart gate and retries.
+#proxy_restart_max_duration_sec = 60
+
+# Local Unix socket used for proxy lifecycle begin/complete notifications.
+#proxy_lifecycle_socket = "/run/drove-gateway/proxy-lifecycle.sock"
+
 # On startup, make this many fresh-sync attempts before falling back to
 # persisted datamanager state for controller-unreachable namespaces.
 #startup_controller_sync_tries = 2
@@ -31,6 +38,9 @@ xproxy = ""
 # Timeout for disk reads/writes used by datamanager state persistence (seconds).
 #disk_io_timeout_sec = 5
 
+# Enable debug-only function latency metrics (drove_gateway_function_duration_seconds).
+# Metric is registered only when this key is present and set to true.
+#debug_metrics_enabled = true
 
 # Nginx
 #nginxplusapiaddr="127.0.0.1"

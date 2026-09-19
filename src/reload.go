@@ -46,6 +46,14 @@ var tmplCache *template.Template
 var tmplCacheErr error
 var tmplCacheOnce sync.Once
 
+type configWriteRequest struct {
+	data   *RenderingData
+	result chan error
+}
+
+var configWriteQueue = make(chan configWriteRequest)
+var configWriteWorkerOnce sync.Once
+
 func setLastSync(ts time.Time) {
 	config.Lock()
 	config.LastUpdates.LastSync = ts
@@ -70,12 +78,16 @@ func setLastConfigRendered(ts time.Time) {
 	config.Unlock()
 }
 
-func reload() error {
+func reload() (err error) {
+	if finishTimer := startErrorFunctionTimer("reload", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	start := time.Now()
-	var err error
 	data := RenderingData{}
 	createRenderingData(&data)
 	setLastSync(time.Now())
+	fullReloadRequired := isProxyLifecycleFullReloadRequired()
 
 	if !GlobalProxyManager.IsRuntimeAPIUpstreamUpdateEnabled() {
 		logger.Debug("Runtime API calls to update upstreams are disabled")
@@ -90,8 +102,11 @@ func reload() error {
 			logger.WithFields(logrus.Fields{
 				"error": err.Error(),
 			}).Error("unable to reload " + data.ProxyPlatform + " config")
-			go Metrics.CountFailedReloads.Inc()
+			Metrics.CountFailedReloads.Inc()
 			return err
+		}
+		if fullReloadRequired {
+			clearProxyLifecycleFullReloadRequired()
 		}
 	} else {
 		logger.Debug("Runtime API calls to update upstreams are enabled")
@@ -99,7 +114,18 @@ func reload() error {
 		//For HAProxy, if config reload is disabled, only use API to update backends. it is responsibility fo config to maintain state across restarts e.g. with global-server-state-file. TO-DO: possible to update config only
 		//For Nginx+, ngx http_api maintains it's own state files if referenced in the running nginx config. Hence no templating is done at all when reload is disabled
 		if ConfigReloadDisabled {
-			logger.Warn(data.ProxyPlatform + ":  reload has been disabled")
+			logger.Warn(data.ProxyPlatform + ": reload has been disabled; continuing lifecycle recovery through runtime API reconciliation")
+		} else if fullReloadRequired {
+			logger.Info("Proxy lifecycle completed; performing required full config reload before runtime reconciliation")
+			err = updateAndReloadConfig(&data)
+			_ = db.UpdateReloadTimestamps(start)
+			if err != nil {
+				logger.WithFields(logrus.Fields{
+					"error": err.Error(),
+				}).Error("unable to perform required full config reload after proxy lifecycle completion. Runtime api calls to update upstreams will be skipped.")
+				return err
+			}
+			clearProxyLifecycleFullReloadRequired()
 		} else {
 			vhosts := db.ReadAllKnownVhosts()
 			lastKnownVhosts := db.ReadLastKnownVhosts()
@@ -142,7 +168,7 @@ func reload() error {
 				logger.WithFields(logrus.Fields{
 					"error": err.Error(),
 				}).Error("unable to update upstreams via " + data.ProxyPlatform + " api")
-				go Metrics.CountFailedReloads.Inc()
+				Metrics.CountFailedReloads.Inc()
 			} else {
 				GlobalProxyManager.UpdateAPIUpdatesHealthStatus(true, "OK")
 			}
@@ -153,7 +179,7 @@ func reload() error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to complete reload/reconciliation")
-		go Metrics.CountFailedReloads.Inc()
+		Metrics.CountFailedReloads.Inc()
 		return err
 	}
 	logger.WithFields(logrus.Fields{
@@ -172,18 +198,22 @@ func updateProxyConfig(data *RenderingData) error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to write " + data.ProxyPlatform + " config")
-		go Metrics.CountFailedReloads.Inc()
+		Metrics.CountFailedReloads.Inc()
 		return err
 	}
 	setLastConfigValid(time.Now())
 	return nil
 }
 
-func updateAndReloadConfig(data *RenderingData) error {
+func updateAndReloadConfig(data *RenderingData) (err error) {
+	if finishTimer := startErrorFunctionTimer("updateAndReloadConfig", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	logger.Debug("Updating config with reload")
 	start := time.Now()
 	vhosts := db.ReadAllKnownVhosts()
-	err := updateProxyConfig(data)
+	err = updateProxyConfig(data)
 	if err != nil {
 		return err
 	}
@@ -194,13 +224,11 @@ func updateAndReloadConfig(data *RenderingData) error {
 		logger.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("unable to reload " + data.ProxyPlatform)
-		go Metrics.CountFailedReloads.Inc()
+		Metrics.CountFailedReloads.Inc()
 	} else {
 		elapsed := time.Since(start)
-		go Metrics.CountSuccessfulReloads.Inc()
-		go func() {
-			Metrics.HistogramReloadDuration.Observe(float64(elapsed) / float64(time.Second))
-		}()
+		Metrics.CountSuccessfulReloads.Inc()
+		Metrics.HistogramReloadDuration.Observe(float64(elapsed) / float64(time.Second))
 		setLastProxyProgramReload(time.Now())
 		if err := db.UpdateLastKnownVhosts(vhosts); err != nil {
 			logger.WithError(err).Warn("Failed to persist last known vhosts after successful reload")
@@ -211,10 +239,14 @@ func updateAndReloadConfig(data *RenderingData) error {
 		//sleep some time for the reload to stabilize
 		time.Sleep(500 * time.Millisecond)
 	}
-	return nil
+	return err
 }
 
 func createRenderingData(data *RenderingData) {
+	if finishTimer := startFunctionTimer("createRenderingData"); finishTimer != nil {
+		defer finishTimer("success")
+	}
+
 	namespaceData := db.ReadAllNamespace()
 	staticData := db.ReadStaticData()
 
@@ -325,7 +357,28 @@ func renderConfigFromTemplate(tmpl *template.Template, data *RenderingData, file
 	return err
 }
 
-func writeConf(data *RenderingData) error {
+func writeConf(data *RenderingData) (returnErr error) {
+	if finishTimer := startErrorFunctionTimer("writeConf", &returnErr); finishTimer != nil {
+		defer finishTimer()
+	}
+	startConfigWriteWorker()
+
+	result := make(chan error, 1)
+	configWriteQueue <- configWriteRequest{data: data, result: result}
+	return <-result
+}
+
+func startConfigWriteWorker() {
+	configWriteWorkerOnce.Do(func() {
+		go func() {
+			for request := range configWriteQueue {
+				request.result <- writeConfSync(request.data)
+			}
+		}()
+	})
+}
+
+func writeConfSync(data *RenderingData) (returnErr error) {
 	template, err := getTmpl(templatePath)
 	if err != nil {
 		return err
@@ -336,12 +389,15 @@ func writeConf(data *RenderingData) error {
 	if err != nil {
 		return err
 	}
+	tmpFileClosed := false
 	defer func() {
-		err = tmpFile.Close()
-		if err != nil {
+		if tmpFileClosed {
+			return
+		}
+		if closeErr := tmpFile.Close(); closeErr != nil {
 			logger.WithFields(logrus.Fields{
 				"file":  tmpFile.Name(),
-				"error": err,
+				"error": closeErr,
 			}).Warning("Failed to close temporary file")
 		}
 	}()
@@ -378,6 +434,7 @@ func writeConf(data *RenderingData) error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
+	tmpFileClosed = true
 	newConfigContent, err := os.ReadFile(tmpFile.Name())
 	if err != nil {
 		return err
@@ -414,7 +471,11 @@ func isHTTPHostGroup(hosts []Host) bool {
 	return true
 }
 
-func resolveWithIPFallback(hostname string) (string, error) {
+func resolveWithIPFallback(hostname string) (resolved string, err error) {
+	if finishTimer := startErrorFunctionTimer("resolveWithIPFallback", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.DnsResolutionTimeoutSec)*time.Second)
 	defer cancel()
 	ip, err := resolveHostnameToIP(ctx, hostname)
@@ -430,7 +491,11 @@ func resolveWithIPFallback(hostname string) (string, error) {
 	return ip, nil
 }
 
-func resolveHostnameToIP(ctx context.Context, hostname string) (string, error) {
+func resolveHostnameToIP(ctx context.Context, hostname string) (resolved string, err error) {
+	if finishTimer := startErrorFunctionTimer("resolveHostnameToIP", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	resolver := net.Resolver{}
 	ips, err := resolver.LookupHost(ctx, hostname)
 	if err != nil {
@@ -442,7 +507,11 @@ func resolveHostnameToIP(ctx context.Context, hostname string) (string, error) {
 	return ips[0], nil
 }
 
-func getTmpl(proxyTemplatePath string) (*template.Template, error) {
+func getTmpl(proxyTemplatePath string) (tmpl *template.Template, err error) {
+	if finishTimer := startErrorFunctionTimer("getTmpl", &err); finishTimer != nil {
+		defer finishTimer()
+	}
+
 	tmplCacheOnce.Do(func() {
 		logger.WithFields(logrus.Fields{
 			"file": proxyTemplatePath,
@@ -487,19 +556,19 @@ func reloadWorker() {
 		// Keep at most one pending reconcile trigger locally so we do not drain the queue while
 		// proxy restart is in progress.
 		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
 		pendingReconcile := false
-		unresponsiveSince := time.Time{}
 		thresholdBreached := false
+		forcedRestartRecovery := false
 		for range ticker.C {
 			// If proxy restart is in progress, wait until proxy control-plane is reachable before
 			// consuming queued reconcile events. This avoids losing events to failed reconciles.
-			if proxyRestartInProgress.Load() {
+			restartInProgress, restartStartedAt := getProxyRestartState()
+			if restartInProgress {
 				if GlobalProxyManager == nil || !GlobalProxyManager.IsControlPlaneResponsive() {
-					if unresponsiveSince.IsZero() {
-						unresponsiveSince = time.Now()
-					}
-					unresponsiveFor := time.Since(unresponsiveSince)
+					unresponsiveFor := time.Since(restartStartedAt)
 					timeout := time.Duration(config.ProxyControlPlaneTimeoutSec) * time.Second
+					maxDuration := time.Duration(config.ProxyRestartMaxDurationSec) * time.Second
 					if unresponsiveFor > timeout {
 						msg := fmt.Sprintf("proxy control-plane unresponsive for %s (timeout=%s)", unresponsiveFor.Truncate(time.Second), timeout)
 						updateHealthSection("ProxyControlPlane", false, msg)
@@ -509,14 +578,26 @@ func reloadWorker() {
 							thresholdBreached = true
 						}
 					}
-					logger.Debug("Proxy restart in progress and control-plane not responsive yet; deferring reconciliation")
-					continue
+					if unresponsiveFor >= maxDuration {
+						if !clearProxyRestart(restartStartedAt) {
+							continue
+						}
+						pendingReconcile = true
+						forcedRestartRecovery = true
+						thresholdBreached = false
+						msg := fmt.Sprintf("proxy restart gate force-cleared after %s; reconciliation will retry until the control plane recovers", maxDuration)
+						updateHealthSection("ProxyControlPlane", false, msg)
+						logger.WithField("max_duration", maxDuration).Error("Proxy restart exceeded maximum duration; force-clearing restart gate")
+					} else {
+						logger.Debug("Proxy restart in progress and control-plane not responsive yet; deferring reconciliation")
+						continue
+					}
+				} else if clearProxyRestart(restartStartedAt) {
+					thresholdBreached = false
+					forcedRestartRecovery = false
+					updateHealthSection("ProxyControlPlane", true, "OK")
+					logger.Info("Proxy control-plane is responsive again; resuming reconciliation processing")
 				}
-				proxyRestartInProgress.Store(false)
-				unresponsiveSince = time.Time{}
-				thresholdBreached = false
-				updateHealthSection("ProxyControlPlane", true, "OK")
-				logger.Info("Proxy control-plane is responsive again; resuming reconciliation processing")
 			}
 
 			if !pendingReconcile {
@@ -528,9 +609,9 @@ func reloadWorker() {
 				}
 			}
 
-			// SIGUSR1 may arrive between the earlier readiness check and this point.
+			// A lifecycle begin notification may arrive between the earlier readiness check and this point.
 			// Preserve the pending reconcile and retry once the proxy is responsive again.
-			if proxyRestartInProgress.Load() {
+			if restartInProgress, _ := getProxyRestartState(); restartInProgress {
 				continue
 			}
 
@@ -539,6 +620,11 @@ func reloadWorker() {
 				continue
 			}
 			pendingReconcile = false
+			if forcedRestartRecovery {
+				forcedRestartRecovery = false
+				updateHealthSection("ProxyControlPlane", true, "OK")
+				logger.Info("Proxy control-plane recovered after forced restart gate clear")
+			}
 		}
 	}()
 }
