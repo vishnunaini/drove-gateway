@@ -168,9 +168,9 @@ func (manager *HaproxyManager) ReconcileAllBackends(data *RenderingData, disable
 		}
 
 		if backendErr != nil {
-			reconciliationFailedBackends[backend] = true
 			Metrics.HaproxyAPICallsFailed.WithLabelValues("get_servers_state").Inc()
 			if isHAProxyBackendMissingResponse(backendErr) {
+				reconciliationFailedBackends[backend] = true
 				missingErr := newProxyBackendMissingError(backend, backendErr)
 				err = errors.Join(err, missingErr)
 				logger.WithFields(logrus.Fields{
@@ -252,6 +252,9 @@ func (manager *HaproxyManager) reconcileBackend(backend string, desiredHosts []H
 	}
 
 	if err := manager.addOrUpdateServers(backend, desiredServerMap, currentServerMap); err != nil {
+		if isProxyBackendMissingError(err) {
+			return err
+		}
 		errs = append(errs, fmt.Sprintf("add/update servers: %v", err))
 	}
 	//add or update servers first to avoid downtime in case of complete replacement of servers
@@ -424,6 +427,9 @@ func (manager *HaproxyManager) addOrUpdateServers(backend string, desiredServerM
 		if _, exists := currentServerMap[serverName]; !exists {
 			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "host": host}).Debug("Required server not found, adding new server")
 			if err := manager.addNewServer(backend, serverName, host, currentServerMap[serverName]); err != nil {
+				if isProxyBackendMissingError(err) {
+					return err
+				}
 				errs = append(errs, fmt.Sprintf("add %s: %v", serverName, err))
 			}
 		} else {
@@ -464,37 +470,30 @@ func (manager *HaproxyManager) addNewServer(backend, serverName string, host Hos
 
 	err := manager.client.AddServer(backend, serverName, fmt.Sprintf("%s %s", serverEndpoint, attributes_string))
 	if err != nil {
+		if isHAProxyBackendMissingResponse(err) {
+			Metrics.HaproxyAPICallsFailed.WithLabelValues("add_server").Inc()
+			return newProxyBackendMissingError(backend, err)
+		}
+
 		srvr, runErr := manager.client.GetServerState(backend, serverName)
 		if runErr == nil {
 			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "srvr": srvr}).Info("Server already exists after failed add attempt. Proceeding to update existing server.")
 			return manager.updateExistingServer(backend, serverName, host, currentServer)
-		} else {
-			//wait for backend to exist in case of recent reload
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Debug("Retrying to add server after brief wait. Some backends might take time to exist after a reload")
-		waitAddGroup:
-			for err != nil {
-				select {
-				case <-ctx.Done():
-					logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Error("Context timeout waiting to retry add server")
-					break waitAddGroup
-				case <-time.After(500 * time.Millisecond):
-					err = manager.client.AddServer(backend, serverName, fmt.Sprintf("%s %s", serverEndpoint, attributes_string))
-					time.Sleep(10 * time.Millisecond)
-					srvr, runErr = manager.client.GetServerState(backend, serverName)
-					if err != nil && runErr == nil {
-						logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "srvr": srvr}).Info("Server added successfully after retry")
-						err = nil
-					} else if err != nil {
-						logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Warn("Retry to add server failed, will retry until timeout")
-					}
-				}
-			}
-			cancel()
 		}
-		Metrics.HaproxyAPICallsFailed.WithLabelValues("add_server").Inc()
-		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")
-		return err
+
+		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Debug("Retrying to add server after brief wait. Some backends might take time to exist after a reload")
+		<-time.After(500 * time.Millisecond)
+		err = manager.client.AddServer(backend, serverName, fmt.Sprintf("%s %s", serverEndpoint, attributes_string))
+		if isHAProxyBackendMissingResponse(err) {
+			Metrics.HaproxyAPICallsFailed.WithLabelValues("add_server").Inc()
+			return newProxyBackendMissingError(backend, err)
+		}
+		if err != nil {
+			Metrics.HaproxyAPICallsFailed.WithLabelValues("add_server").Inc()
+			logger.WithFields(logrus.Fields{"backend": backend, "server": serverName, "error": err}).Error("Failed to add server")
+			return err
+		}
+		logger.WithFields(logrus.Fields{"backend": backend, "server": serverName}).Info("Server added successfully after retry")
 	}
 	Metrics.HaproxyAPICallsSuccessful.WithLabelValues("add_server").Inc()
 
