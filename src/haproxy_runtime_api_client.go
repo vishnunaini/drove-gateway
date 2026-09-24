@@ -577,6 +577,9 @@ func (manager *HaproxyManager) writeGlobalServerStateFile() error {
 	if err != nil {
 		return fmt.Errorf("failed to get servers state for global server state file: %w", err)
 	}
+	if _, err := manager.parseRuntimeServersWithBackend(output); err != nil {
+		return fmt.Errorf("invalid servers state for global server state file: %w", err)
+	}
 
 	// HAProxy expects a trailing newline when parsing the server state file.
 	if !strings.HasSuffix(output, "\n") {

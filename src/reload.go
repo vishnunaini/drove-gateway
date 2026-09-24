@@ -211,7 +211,7 @@ func updateAndReloadConfig(data *RenderingData) error {
 		//sleep some time for the reload to stabilize
 		time.Sleep(500 * time.Millisecond)
 	}
-	return nil
+	return err
 }
 
 func createRenderingData(data *RenderingData) {
