@@ -1,8 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -260,7 +261,7 @@ func (dm *DataManager) ReadApps(namespace string) (map[string]App, error) {
 		"apps":      ns.Apps,
 	}).Trace("ReadApp successfully")
 
-	return deepClone(ns.Apps), nil //returning copy
+	return cloneApps(ns.Apps), nil //returning copy
 }
 
 func (dm *DataManager) UpdateApps(namespace string, apps map[string]App) error {
@@ -316,7 +317,7 @@ func (dm *DataManager) ReadKnownVhosts(namespace string) (Vhosts, error) {
 		"knownVHosts": ns.KnownVHosts,
 	}).Trace("ReadKnownVhosts successfully")
 
-	return deepClone(ns.KnownVHosts), nil //returning copy
+	return Vhosts{Vhosts: maps.Clone(ns.KnownVHosts.Vhosts)}, nil //returning copy
 }
 
 func (dm *DataManager) ReadAllKnownVhosts() Vhosts {
@@ -436,7 +437,7 @@ func (dm *DataManager) ReadLastKnownVhosts() Vhosts {
 		"LastKnownVhosts": dm.LastKnownVhosts,
 	}).Trace("LastKnownVhosts successfully")
 
-	return deepClone(dm.LastKnownVhosts) //returning copy
+	return Vhosts{Vhosts: maps.Clone(dm.LastKnownVhosts.Vhosts)} //returning copy
 }
 
 func (dm *DataManager) UpdateLastKnownVhosts(inLastKnownVhosts Vhosts) error {
@@ -464,7 +465,7 @@ func (dm *DataManager) ReadLastKnownBackends() map[string]bool {
 		"LastKnownBackends": dm.LastKnownBackends,
 	}).Trace("ReadLastKnownBackends successfully")
 
-	return deepClone(dm.LastKnownBackends) //returning copy
+	return maps.Clone(dm.LastKnownBackends) //returning copy
 }
 
 func (dm *DataManager) UpdateLastKnownBackends(inLastKnownBackends map[string]bool) error {
@@ -491,7 +492,7 @@ func (dm *DataManager) ReadAllNamespace() map[string]NamespaceData {
 		"operation": operation,
 	}).Trace("ReadAllNamespace data successfully")
 
-	return deepClone(dm.namespaces) //returning copy
+	return cloneNamespaces(dm.namespaces) //returning copy
 }
 
 // Read retrieves data from a specific namespace
@@ -514,9 +515,9 @@ func (dm *DataManager) ExportSnapshot() DataManagerSnapshot {
 	defer dm.mu.RUnlock()
 
 	return DataManagerSnapshot{
-		Namespaces:                     deepClone(dm.namespaces),
-		LastKnownVhosts:                deepClone(dm.LastKnownVhosts),
-		LastKnownBackends:              deepClone(dm.LastKnownBackends),
+		Namespaces:                     cloneNamespaces(dm.namespaces),
+		LastKnownVhosts:                Vhosts{Vhosts: maps.Clone(dm.LastKnownVhosts.Vhosts)},
+		LastKnownBackends:              maps.Clone(dm.LastKnownBackends),
 		LastReloadTimestamp:            dm.LastReloadTimestamp,
 		LastUpstreamAPIUpdateTimestamp: dm.LastUpstreamAPIUpdateTimestamp,
 	}
@@ -545,8 +546,8 @@ func (dm *DataManager) ImportSnapshotForNamespaces(snapshot DataManagerSnapshot,
 		}
 
 		current.Leader = snapshotNamespace.Leader
-		current.Apps = deepClone(snapshotNamespace.Apps)
-		current.KnownVHosts = deepClone(snapshotNamespace.KnownVHosts)
+		current.Apps = cloneApps(snapshotNamespace.Apps)
+		current.KnownVHosts = Vhosts{Vhosts: maps.Clone(snapshotNamespace.KnownVHosts.Vhosts)}
 		if !snapshotNamespace.Timestamp.IsZero() {
 			current.Timestamp = snapshotNamespace.Timestamp
 		}
@@ -556,8 +557,8 @@ func (dm *DataManager) ImportSnapshotForNamespaces(snapshot DataManagerSnapshot,
 
 	// Keep global metadata in sync only when importing all namespaces.
 	if namespaces == nil {
-		dm.LastKnownVhosts = deepClone(snapshot.LastKnownVhosts)
-		dm.LastKnownBackends = deepClone(snapshot.LastKnownBackends)
+		dm.LastKnownVhosts = Vhosts{Vhosts: maps.Clone(snapshot.LastKnownVhosts.Vhosts)}
+		dm.LastKnownBackends = maps.Clone(snapshot.LastKnownBackends)
 		dm.LastReloadTimestamp = snapshot.LastReloadTimestamp
 		dm.LastUpstreamAPIUpdateTimestamp = snapshot.LastUpstreamAPIUpdateTimestamp
 	}
@@ -566,18 +567,29 @@ func (dm *DataManager) ImportSnapshotForNamespaces(snapshot DataManagerSnapshot,
 	return restoredNames
 }
 
-func deepClone[T any](src T) T {
-	data, err := json.Marshal(src)
-	if err != nil {
-		logger.WithError(err).Warn("deep clone marshal failed")
-		return src
+func cloneApps(apps map[string]App) map[string]App {
+	cloned := maps.Clone(apps)
+	for appID, app := range cloned {
+		app.Hosts = slices.Clone(app.Hosts)
+		app.Tags = maps.Clone(app.Tags)
+		app.Groups = maps.Clone(app.Groups)
+		for groupName, group := range app.Groups {
+			group.Hosts = slices.Clone(group.Hosts)
+			group.Tags = maps.Clone(group.Tags)
+			app.Groups[groupName] = group
+		}
+		cloned[appID] = app
 	}
+	return cloned
+}
 
-	var dst T
-	if err := json.Unmarshal(data, &dst); err != nil {
-		logger.WithError(err).Warn("deep clone unmarshal failed")
-		return src
+func cloneNamespaces(namespaces map[string]NamespaceData) map[string]NamespaceData {
+	cloned := maps.Clone(namespaces)
+	for namespace, data := range cloned {
+		data.Drove.Drove = slices.Clone(data.Drove.Drove)
+		data.Apps = cloneApps(data.Apps)
+		data.KnownVHosts.Vhosts = maps.Clone(data.KnownVHosts.Vhosts)
+		cloned[namespace] = data
 	}
-
-	return dst
+	return cloned
 }
