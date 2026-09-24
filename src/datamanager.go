@@ -261,7 +261,7 @@ func (dm *DataManager) ReadApps(namespace string) (map[string]App, error) {
 		"apps":      ns.Apps,
 	}).Trace("ReadApp successfully")
 
-	return cloneApps(ns.Apps), nil //returning copy
+	return deepClone(ns.Apps), nil //returning copy
 }
 
 func (dm *DataManager) UpdateApps(namespace string, apps map[string]App) error {
@@ -317,7 +317,7 @@ func (dm *DataManager) ReadKnownVhosts(namespace string) (Vhosts, error) {
 		"knownVHosts": ns.KnownVHosts,
 	}).Trace("ReadKnownVhosts successfully")
 
-	return Vhosts{Vhosts: maps.Clone(ns.KnownVHosts.Vhosts)}, nil //returning copy
+	return deepClone(ns.KnownVHosts), nil //returning copy
 }
 
 func (dm *DataManager) ReadAllKnownVhosts() Vhosts {
@@ -437,7 +437,7 @@ func (dm *DataManager) ReadLastKnownVhosts() Vhosts {
 		"LastKnownVhosts": dm.LastKnownVhosts,
 	}).Trace("LastKnownVhosts successfully")
 
-	return Vhosts{Vhosts: maps.Clone(dm.LastKnownVhosts.Vhosts)} //returning copy
+	return deepClone(dm.LastKnownVhosts) //returning copy
 }
 
 func (dm *DataManager) UpdateLastKnownVhosts(inLastKnownVhosts Vhosts) error {
@@ -465,7 +465,7 @@ func (dm *DataManager) ReadLastKnownBackends() map[string]bool {
 		"LastKnownBackends": dm.LastKnownBackends,
 	}).Trace("ReadLastKnownBackends successfully")
 
-	return maps.Clone(dm.LastKnownBackends) //returning copy
+	return deepClone(dm.LastKnownBackends) //returning copy
 }
 
 func (dm *DataManager) UpdateLastKnownBackends(inLastKnownBackends map[string]bool) error {
@@ -492,7 +492,7 @@ func (dm *DataManager) ReadAllNamespace() map[string]NamespaceData {
 		"operation": operation,
 	}).Trace("ReadAllNamespace data successfully")
 
-	return cloneNamespaces(dm.namespaces) //returning copy
+	return deepClone(dm.namespaces) //returning copy
 }
 
 // Read retrieves data from a specific namespace
@@ -515,9 +515,9 @@ func (dm *DataManager) ExportSnapshot() DataManagerSnapshot {
 	defer dm.mu.RUnlock()
 
 	return DataManagerSnapshot{
-		Namespaces:                     cloneNamespaces(dm.namespaces),
-		LastKnownVhosts:                Vhosts{Vhosts: maps.Clone(dm.LastKnownVhosts.Vhosts)},
-		LastKnownBackends:              maps.Clone(dm.LastKnownBackends),
+		Namespaces:                     deepClone(dm.namespaces),
+		LastKnownVhosts:                deepClone(dm.LastKnownVhosts),
+		LastKnownBackends:              deepClone(dm.LastKnownBackends),
 		LastReloadTimestamp:            dm.LastReloadTimestamp,
 		LastUpstreamAPIUpdateTimestamp: dm.LastUpstreamAPIUpdateTimestamp,
 	}
@@ -546,8 +546,8 @@ func (dm *DataManager) ImportSnapshotForNamespaces(snapshot DataManagerSnapshot,
 		}
 
 		current.Leader = snapshotNamespace.Leader
-		current.Apps = cloneApps(snapshotNamespace.Apps)
-		current.KnownVHosts = Vhosts{Vhosts: maps.Clone(snapshotNamespace.KnownVHosts.Vhosts)}
+		current.Apps = deepClone(snapshotNamespace.Apps)
+		current.KnownVHosts = deepClone(snapshotNamespace.KnownVHosts)
 		if !snapshotNamespace.Timestamp.IsZero() {
 			current.Timestamp = snapshotNamespace.Timestamp
 		}
@@ -557,14 +557,33 @@ func (dm *DataManager) ImportSnapshotForNamespaces(snapshot DataManagerSnapshot,
 
 	// Keep global metadata in sync only when importing all namespaces.
 	if namespaces == nil {
-		dm.LastKnownVhosts = Vhosts{Vhosts: maps.Clone(snapshot.LastKnownVhosts.Vhosts)}
-		dm.LastKnownBackends = maps.Clone(snapshot.LastKnownBackends)
+		dm.LastKnownVhosts = deepClone(snapshot.LastKnownVhosts)
+		dm.LastKnownBackends = deepClone(snapshot.LastKnownBackends)
 		dm.LastReloadTimestamp = snapshot.LastReloadTimestamp
 		dm.LastUpstreamAPIUpdateTimestamp = snapshot.LastUpstreamAPIUpdateTimestamp
 	}
 
 	sort.Strings(restoredNames)
 	return restoredNames
+}
+
+type deepCloneable interface {
+	map[string]App | map[string]NamespaceData | Vhosts | map[string]bool
+}
+
+func deepClone[T deepCloneable](source T) T {
+	switch value := any(source).(type) {
+	case map[string]App:
+		return any(cloneApps(value)).(T)
+	case map[string]NamespaceData:
+		return any(cloneNamespaces(value)).(T)
+	case Vhosts:
+		return any(Vhosts{Vhosts: maps.Clone(value.Vhosts)}).(T)
+	case map[string]bool:
+		return any(maps.Clone(value)).(T)
+	default:
+		panic("deepClone: missing implementation for supported type")
+	}
 }
 
 func cloneApps(apps map[string]App) map[string]App {
