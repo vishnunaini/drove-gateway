@@ -336,7 +336,11 @@ func writeConf(data *RenderingData) error {
 	if err != nil {
 		return err
 	}
+	tmpFileClosed := false
 	defer func() {
+		if tmpFileClosed {
+			return
+		}
 		err = tmpFile.Close()
 		if err != nil {
 			logger.WithFields(logrus.Fields{
@@ -378,6 +382,7 @@ func writeConf(data *RenderingData) error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
+	tmpFileClosed = true
 	newConfigContent, err := os.ReadFile(tmpFile.Name())
 	if err != nil {
 		return err
